@@ -1,17 +1,14 @@
 /**
- * sw.js — Prompt2UI service worker
- *
- * Cache-first for app shell assets; network-first for navigations.
- * Enables offline use and installability (Android Chrome + iOS Safari Add to Home Screen).
+ * sw.js — Prompt2UI blank starter service worker
  */
 
-const CACHE = 'prompt2ui-v2';
+const CACHE = 'prompt2ui-blank-v1';
 
 const PRECACHE = [
   './',
   './index.html',
   './app.js',
-  './app/calorie-tracker.js',
+  './app/blank.js',
   './core/db-api.js',
   './core/prompt-db.js',
   './core/prompt-crypto.js',
@@ -43,11 +40,8 @@ self.addEventListener('fetch', (event) => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
-
-  // Bypass non-same-origin (Tailwind CDN, Google Fonts, OAuth, cloud APIs)
   if (url.origin !== self.location.origin) return;
 
-  // Navigations: network-first, fall back to cached shell
   if (request.mode === 'navigate') {
     event.respondWith(
       fetch(request)
@@ -61,7 +55,6 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static assets: cache-first
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;

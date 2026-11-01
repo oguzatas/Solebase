@@ -1,12 +1,41 @@
-# PROMPT.md — Generate a Prompt2UI personal app with AI
+# PROMPT.md — Turn the blank starter into any personal app
 
-Clone this repo, then ask an AI to **replace `app/` only**. Do not reimplement sync, adapters, or crypto — those live in `core/`.
+Clone this repo (root = blank starter), then ask an AI to **replace `app/` only**. Do not reimplement sync, adapters, or crypto — those live in `core/`.
+
+---
+
+## Blank → your app
+
+1. Serve the root: `python -m http.server 8080`
+2. You see an empty canvas and a Settings gear (sync). One quiet line: `edit app/`.
+3. Replace `app/blank.js` (or add `app/<name>.js` and point `app.js` at it).
+4. Export `mount(root)` → `{ unmount(), title? }` using `db.collection(...)`.
+5. Configure cloud later in Settings — never inside `app/`.
+
+### Copy a use-ready example instead
+
+Prefer starting from a working UI?
+
+```bash
+# PowerShell — copy an example folder somewhere you deploy
+Copy-Item -Recurse examples\notes my-notes-app
+cd my-notes-app
+python -m http.server 8080
+```
+
+Or refresh `core/` into an example after root engine changes:
+
+```powershell
+.\scripts\copy-core.ps1 -Target examples\notes
+```
+
+Examples are self-contained (duplicated `core/` on Windows — no symlinks).
 
 ---
 
 ## Design method (quiet utility)
 
-The shell (`index.html`) owns the **opening page**, tokens, and Settings chrome. Your `app/` module is the **utility surface** shown after **Open app**. Match the shell; do not invent a second visual language or any sync UI.
+The shell owns tokens and Settings chrome. Your `app/` module is the utility surface. Match the shell; do not invent a second visual language or any sync UI.
 
 ### Tokens (from `:root` in `index.html`)
 
@@ -22,18 +51,16 @@ The shell (`index.html`) owns the **opening page**, tokens, and Settings chrome.
 | `--accent-2` `#a3bfb0` | Soft accent / code |
 | `--warn` `#c4a574` | Non-critical highlight |
 | `--danger` `#c97a7a` | Destructive |
-| `--font-display` | Bricolage Grotesque — titles / brand |
+| `--font-display` | Bricolage Grotesque — titles |
 | `--font-body` | Figtree — UI copy |
-| `--radius` `0.5rem` | Corners (keep quiet; no pill clusters) |
-| `--space-2`…`--space-5` | Prefer dense spacing over airy marketing layout |
+| `--radius` `0.5rem` | Corners |
 
 ### Hard rules for `app/`
 
-- **Quiet utility:** dense, calm, minimal chrome. One job. Instant CRUD.
-- Prefer existing shell classes (`.btn`, `.btn-primary`, `.btn-ghost`, `.micro-*`, form / list patterns) or a unique wrapper with the same tokens.
-- **Never** build sync, adapter, passphrase, export/import, or cloud UI inside `app/`. That lives only in Settings (`core/settings-panel.js`).
-- **Never** invent a marketing hero, cards-for-decoration, macro rings on an opening page, floating badges, or purple/cream/broadsheet themes.
-- Dark quiet utility is the default. Soft sage accent — not neon glow stacks.
+- Quiet utility: dense, calm, minimal chrome. One job. Instant CRUD.
+- Prefer shell classes (`.btn`, `.btn-primary`, `.btn-ghost`) or the same tokens.
+- **Never** build sync / adapter / passphrase / export UI in `app/`.
+- **Never** invent a marketing hero selling Prompt2UI.
 - Escape user text in HTML. Mobile-friendly.
 
 ---
@@ -50,38 +77,23 @@ Constraints:
 
   import { db } from '../core/db-api.js';
 
-- Collections API (do not redefine; do not call adapters / crypto / sync):
+- Collections API:
 
   await db.collection('my-collection').add({ ...fields })
-  await db.collection('my-collection').get()              // live rows
+  await db.collection('my-collection').get()
   await db.collection('my-collection').set(items)
   await db.collection('my-collection').update(id, patch)
-  await db.collection('my-collection').remove(id)         // tombstone
-  db.collection('my-collection').subscribe((rows) => {})  // unsubscribe fn
+  await db.collection('my-collection').remove(id)
+  db.collection('my-collection').subscribe((rows) => {})
   await db.collection('my-collection').clear()
 
-- Auto fields: id, createdAt, updatedAt. Prefer plain JSON-serializable objects.
 - Export:
 
   export async function mount(root) { ... return { unmount(), title? } }
 
-- mount() must:
-  1. Use uniquely named kebab-case collection(s).
-  2. Render into `root` (innerHTML or DOM APIs).
-  3. Subscribe so the UI updates on every change.
-  4. Return { unmount() { /* unsubscribe + clear root */ }, title?: string }.
-
-- Styling — quiet utility (match index.html tokens):
-  Prefer CSS variables: --bg #0c0e11, --bg-elevated #161a20, --text #e6e9ee,
-  --text-muted #6b7380, --accent #7a9e8a, --border #2a323d, --radius 0.5rem.
-  Fonts: Bricolage Grotesque (titles) / Figtree (body) via shell, or inherit.
-  Dense calm UI; reuse .btn / form / list patterns when possible.
-  Do NOT invent sync/settings/cloud UI. Do NOT use purple-on-white,
-  cream-serif-terracotta, broadsheet, Inter/Roboto/Arial, or decorative cards.
-- One job, instant CRUD, mobile-friendly. Escape user text in HTML.
-- Do not fetch remote URLs unless the user explicitly asks.
-- Cloud sync is automatic when the user configures Settings — your app must not import core/prompt-storage.js or core/sync-engine.js.
-- Output ONLY the ES module source for app/ (e.g. app/main.js) — no markdown fences unless asked.
+- Styling — quiet utility tokens from index.html (:root).
+  Do NOT invent sync/settings/cloud UI.
+- Output ONLY the ES module source for app/ — no markdown fences unless asked.
 ```
 
 ---
@@ -89,7 +101,7 @@ Constraints:
 ## User prompt template
 
 ```
-Replace the Prompt2UI sample app with: <NAME>.
+Replace the Prompt2UI blank app with: <NAME>.
 
 Purpose: <one sentence>
 
@@ -105,46 +117,19 @@ Save as: app/<file>.js
 Update app.js to import mount from that file if the filename changes.
 ```
 
-### Example
-
-```
-Replace the Prompt2UI sample app with: Habit streaks.
-
-Purpose: Track daily habits and show a simple streak count.
-
-Collections:
-- habits: name (string), lastDone (ISO date), streak (number)
-
-UI:
-- Form: habit name
-- List with "Mark done today" and delete
-- Show streak count per habit (no badges/stickers)
-- Empty state copy
-
-Save as: app/habit-streaks.js
-Update app.js to mount it.
-```
-
 ---
 
 ## Wiring after generation
 
-1. Save the module under `app/` (replace `calorie-tracker.js` or add a new file).  
-2. If the filename changed, update the import in root `app.js`:
-
-```js
-import { mount as mountApp } from './app/habit-streaks.js';
-```
-
-3. Optionally add the new path to `PRECACHE` in `sw.js`.  
-4. Do **not** touch adapters — configure cloud in Settings on each device.  
-5. Do **not** replace the opening page in `index.html` unless the user asked for shell redesign — AI app work targets `app/` only.
+1. Save under `app/`.  
+2. Update import in root `app.js` if the filename changed.  
+3. Optionally add the path to `PRECACHE` in `sw.js`.  
+4. Do **not** touch adapters — configure cloud in Settings.
 
 ---
 
 ## Reminder
 
-- Opening page + Settings / Sync → shell (`index.html` + `core/settings-panel.js`).  
-- Local CRUD → IndexedDB via `db.collection(...)` in `app/`.  
-- Sync / E2EE / Drive / WebDAV / S3 → Settings + `core/` only.  
-- Limits: last-write-wins (not CRDT), passphrase loss is permanent, snapshot sync is for small personal data.
+- Blank starter ≠ demo calorie UI. Examples live under `examples/`.  
+- Local CRUD → `db.collection(...)` in `app/`.  
+- Sync / E2EE → Settings + `core/` only.

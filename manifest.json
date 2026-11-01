@@ -1,13 +1,13 @@
 {
   "name": "Prompt2UI",
   "short_name": "Prompt2UI",
-  "description": "Cloneable zero-build PWA boilerplate — IndexedDB, E2EE, BYO cloud sync",
+  "description": "Blank zero-build PWA starter — IndexedDB, E2EE, BYO cloud sync",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0b1017",
-  "theme_color": "#0b1017",
+  "background_color": "#0c0e11",
+  "theme_color": "#0c0e11",
   "categories": ["productivity", "utilities"],
   "icons": [
     {

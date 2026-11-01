@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0c0e11" />
-  <meta name="description" content="Prompt2UI — cloneable zero-build PWA boilerplate with IndexedDB, E2EE, and BYO cloud sync" />
+  <meta name="description" content="Prompt2UI blank starter — local-first personal app shell with E2EE sync" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <title>Prompt2UI</title>
@@ -63,7 +63,6 @@
       --warn: #c4a574;
       --muted-accent: #8a9bb0;
       --danger: #c97a7a;
-      --glow: rgba(122, 158, 138, 0.08);
       --font-display: 'Bricolage Grotesque', ui-sans-serif, sans-serif;
       --font-body: 'Figtree', ui-sans-serif, sans-serif;
       --radius: 0.5rem;
@@ -91,9 +90,8 @@
 
     body {
       background:
-        radial-gradient(1100px 640px at 8% -8%, rgba(122, 158, 138, 0.07), transparent 55%),
-        radial-gradient(900px 520px at 96% 4%, rgba(90, 110, 140, 0.09), transparent 52%),
-        radial-gradient(700px 480px at 50% 120%, rgba(40, 48, 58, 0.5), transparent 48%),
+        radial-gradient(1100px 640px at 8% -8%, rgba(122, 158, 138, 0.06), transparent 55%),
+        radial-gradient(900px 520px at 96% 4%, rgba(90, 110, 140, 0.07), transparent 52%),
         linear-gradient(168deg, #08090b 0%, #0c0e11 42%, #10141a 100%);
       background-attachment: fixed;
       overflow: hidden;
@@ -104,28 +102,9 @@
       position: fixed;
       inset: 0;
       pointer-events: none;
-      opacity: 0.04;
+      opacity: 0.035;
       z-index: 50;
       background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-    }
-
-    /* —— Views —— */
-    #opening {
-      position: fixed;
-      inset: 0;
-      z-index: 5;
-      display: grid;
-      place-items: center;
-      padding: clamp(1.5rem, 5vw, 3rem);
-      opacity: 1;
-      visibility: visible;
-      transition: opacity 0.45s var(--ease-out), visibility 0.45s;
-    }
-
-    body[data-view="app"] #opening {
-      opacity: 0;
-      visibility: hidden;
-      pointer-events: none;
     }
 
     #app {
@@ -134,118 +113,8 @@
       height: 100%;
       position: relative;
       z-index: 1;
-      opacity: 0;
-      visibility: hidden;
-      pointer-events: none;
-      transition: opacity 0.4s var(--ease-out) 0.05s, visibility 0.4s;
     }
 
-    body[data-view="app"] #app {
-      opacity: 1;
-      visibility: visible;
-      pointer-events: auto;
-    }
-
-    /* —— Opening page —— */
-    .opening-atmosphere {
-      position: absolute;
-      inset: 0;
-      overflow: hidden;
-      pointer-events: none;
-    }
-
-    .opening-atmosphere .plane {
-      position: absolute;
-      inset: -20% -10%;
-      background:
-        radial-gradient(ellipse 55% 40% at 30% 35%, rgba(122, 158, 138, 0.11), transparent 70%),
-        radial-gradient(ellipse 45% 35% at 72% 58%, rgba(100, 120, 150, 0.08), transparent 65%);
-      animation: atmosphere-drift 18s ease-in-out infinite alternate;
-    }
-
-    .opening-atmosphere .horizon {
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: 18%;
-      height: 1px;
-      background: linear-gradient(90deg, transparent, rgba(230, 233, 238, 0.12), transparent);
-      transform-origin: center;
-      animation: horizon-in 1.1s var(--ease-out) both;
-    }
-
-    .opening-copy {
-      position: relative;
-      z-index: 1;
-      max-width: 36rem;
-      text-align: left;
-      width: min(100%, 36rem);
-    }
-
-    .opening-brand {
-      font-family: var(--font-display);
-      font-size: clamp(2.75rem, 8vw, 4.5rem);
-      font-weight: 700;
-      letter-spacing: -0.04em;
-      line-height: 0.95;
-      margin: 0 0 1.35rem;
-      animation: rise-in 0.85s var(--ease-out) both;
-    }
-
-    .opening-headline {
-      font-family: var(--font-display);
-      font-size: clamp(1.15rem, 2.6vw, 1.45rem);
-      font-weight: 500;
-      letter-spacing: -0.02em;
-      line-height: 1.35;
-      margin: 0 0 0.75rem;
-      color: var(--mist-100, #e6e9ee);
-      animation: rise-in 0.85s var(--ease-out) 0.08s both;
-    }
-
-    .opening-support {
-      margin: 0 0 1.75rem;
-      font-size: 1rem;
-      line-height: 1.55;
-      color: var(--text-muted);
-      max-width: 28rem;
-      animation: rise-in 0.85s var(--ease-out) 0.16s both;
-    }
-
-    .opening-cta {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.65rem;
-      animation: rise-in 0.85s var(--ease-out) 0.24s both;
-    }
-
-    @keyframes rise-in {
-      from { opacity: 0; transform: translateY(14px); }
-      to { opacity: 1; transform: none; }
-    }
-
-    @keyframes atmosphere-drift {
-      from { transform: translate3d(0, 0, 0) scale(1); }
-      to { transform: translate3d(2%, -1.5%, 0) scale(1.03); }
-    }
-
-    @keyframes horizon-in {
-      from { opacity: 0; transform: scaleX(0.4); }
-      to { opacity: 1; transform: scaleX(1); }
-    }
-
-    @media (prefers-reduced-motion: reduce) {
-      .opening-atmosphere .plane,
-      .opening-atmosphere .horizon,
-      .opening-brand,
-      .opening-headline,
-      .opening-support,
-      .opening-cta,
-      .pane-enter,
-      .entry-item { animation: none !important; }
-    }
-
-    /* —— App shell (minimal chrome) —— */
     #sidebar {
       display: flex;
       flex-direction: column;
@@ -268,13 +137,10 @@
       border: 0;
       background: transparent;
       color: inherit;
-      cursor: pointer;
       font: inherit;
       width: 100%;
       border-radius: var(--radius);
     }
-
-    .sidebar-brand:hover { background: rgba(255, 255, 255, 0.03); }
 
     .brand-glyph {
       width: 2rem;
@@ -414,6 +280,25 @@
       to { opacity: 1; transform: none; }
     }
 
+    .blank-canvas {
+      min-height: min(60vh, 28rem);
+      display: grid;
+      place-items: center;
+      animation: pane-in 0.5s var(--ease-out) both;
+    }
+
+    .blank-hint {
+      margin: 0;
+      color: var(--text-muted);
+      font-size: 0.9rem;
+      letter-spacing: 0.01em;
+    }
+
+    .blank-hint code {
+      font-size: 0.85em;
+      color: var(--accent-2);
+    }
+
     .btn {
       display: inline-flex;
       align-items: center;
@@ -434,12 +319,9 @@
     .btn-primary {
       background: var(--accent);
       color: var(--accent-ink);
-      box-shadow: none;
     }
 
-    .btn-primary:hover {
-      background: var(--accent-2);
-    }
+    .btn-primary:hover { background: var(--accent-2); }
 
     .btn-ghost {
       background: transparent;
@@ -450,11 +332,6 @@
     .btn-ghost:hover {
       background: rgba(255, 255, 255, 0.03);
       border-color: color-mix(in oklab, var(--accent) 35%, var(--border));
-    }
-
-    .btn-lg {
-      padding: 0.7rem 1.25rem;
-      font-size: 0.925rem;
     }
 
     .btn-icon {
@@ -468,56 +345,6 @@
 
     .btn-icon:hover { color: var(--danger); background: rgba(201, 122, 122, 0.08); }
 
-    /* —— Sample app (quiet utility density) —— */
-    .micro-header {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: flex-end;
-      justify-content: space-between;
-      gap: 0.85rem;
-      margin-bottom: 1.1rem;
-      padding-bottom: 0.85rem;
-      border-bottom: 1px solid var(--border-soft);
-    }
-
-    .micro-eyebrow {
-      font-size: 0.65rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: var(--text-muted);
-      margin: 0 0 0.25rem;
-    }
-
-    .micro-title {
-      font-family: var(--font-display);
-      font-size: 1.35rem;
-      font-weight: 650;
-      letter-spacing: -0.03em;
-      margin: 0 0 0.2rem;
-    }
-
-    .micro-sub {
-      margin: 0;
-      color: var(--text-muted);
-      font-size: 0.82rem;
-    }
-
-    .micro-sub code {
-      font-size: 0.74rem;
-      color: var(--accent-2);
-    }
-
-    .date-filter {
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-      font-size: 0.7rem;
-      color: var(--text-muted);
-    }
-
-    .date-filter input,
-    .entry-form input,
-    .goals-panel input,
     .settings-field input,
     .settings-field select {
       background: var(--bg-elevated);
@@ -531,140 +358,12 @@
       transition: border-color 0.2s, box-shadow 0.2s;
     }
 
-    .date-filter input:focus,
-    .entry-form input:focus,
-    .goals-panel input:focus,
     .settings-field input:focus,
     .settings-field select:focus {
       border-color: color-mix(in oklab, var(--accent) 45%, var(--border));
       box-shadow: 0 0 0 2px rgba(122, 158, 138, 0.12);
     }
 
-    .macro-bars {
-      display: grid;
-      gap: 0.55rem;
-      margin-bottom: 1.1rem;
-      max-width: 36rem;
-    }
-
-    .macro-bar-row {
-      display: grid;
-      grid-template-columns: 4.5rem 1fr auto;
-      align-items: center;
-      gap: 0.65rem;
-      font-size: 0.78rem;
-    }
-
-    .macro-bar-row strong {
-      font-weight: 600;
-      color: var(--mist-300, #9aa3b0);
-    }
-
-    .macro-track {
-      height: 0.35rem;
-      border-radius: 999px;
-      background: var(--ink-700, #1e242c);
-      overflow: hidden;
-    }
-
-    .macro-fill {
-      height: 100%;
-      border-radius: inherit;
-      background: var(--bar, var(--accent));
-      width: calc(var(--p, 0) * 1%);
-      transition: width 0.35s var(--ease-out);
-    }
-
-    .macro-nums {
-      color: var(--text-muted);
-      font-variant-numeric: tabular-nums;
-      min-width: 5.5rem;
-      text-align: right;
-    }
-
-    .entry-form,
-    .goals-panel {
-      max-width: 36rem;
-      margin-bottom: 1rem;
-      padding: 0;
-      border: 0;
-      border-radius: 0;
-      background: transparent;
-    }
-
-    .form-row {
-      display: grid;
-      grid-template-columns: 1fr 5.5rem;
-      gap: 0.55rem;
-      margin-bottom: 0.55rem;
-    }
-
-    .macros-row {
-      grid-template-columns: repeat(3, 1fr);
-    }
-
-    .entry-form label,
-    .goals-panel label {
-      display: flex;
-      flex-direction: column;
-      gap: 0.25rem;
-      font-size: 0.68rem;
-      color: var(--text-muted);
-      letter-spacing: 0.02em;
-    }
-
-    .form-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.45rem;
-      margin-top: 0.15rem;
-    }
-
-    .goals-panel.hidden { display: none; }
-    .goals-panel {
-      padding: 0.75rem 0;
-      border-top: 1px solid var(--border-soft);
-      margin-top: 0.25rem;
-    }
-    .goals-panel h3 {
-      margin: 0 0 0.65rem;
-      font-size: 0.85rem;
-      font-weight: 600;
-    }
-
-    .entry-list {
-      list-style: none;
-      margin: 0;
-      padding: 0;
-      max-width: 36rem;
-      display: flex;
-      flex-direction: column;
-      gap: 0;
-      border-top: 1px solid var(--border-soft);
-    }
-
-    .entry-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.65rem;
-      padding: 0.65rem 0.15rem;
-      border-bottom: 1px solid var(--border-soft);
-      animation: pane-in 0.28s ease both;
-    }
-
-    .entry-item:hover { background: rgba(255, 255, 255, 0.015); }
-
-    .entry-main strong { display: block; font-size: 0.9rem; font-weight: 600; }
-    .entry-macros { font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
-    .empty-state {
-      color: var(--text-muted);
-      padding: 1rem 0.15rem;
-      font-size: 0.85rem;
-      list-style: none;
-    }
-
-    /* —— Settings —— */
     #settings-backdrop {
       position: fixed;
       inset: 0;
@@ -797,10 +496,13 @@
     #toast[data-type="ok"] { border-color: color-mix(in oklab, var(--accent) 45%, var(--border)); }
     #toast[data-type="err"] { border-color: color-mix(in oklab, var(--danger) 45%, var(--border)); color: #f0c4c4; }
 
+    @media (prefers-reduced-motion: reduce) {
+      .pane-enter,
+      .blank-canvas { animation: none !important; }
+    }
+
     @media (max-width: 860px) {
-      #app {
-        grid-template-columns: 1fr !important;
-      }
+      #app { grid-template-columns: 1fr !important; }
 
       #sidebar {
         position: fixed;
@@ -831,59 +533,20 @@
       .nav-item { justify-content: flex-start; padding: 0.55rem 0.65rem; }
       .nav-label { display: inline; }
 
-      .form-row,
-      .macros-row { grid-template-columns: 1fr 1fr; }
-
       #main-pane { padding: 1rem 0.9rem 1.75rem; }
-
-      .opening-copy { text-align: left; }
-    }
-
-    @media (max-width: 480px) {
-      .form-row,
-      .macros-row { grid-template-columns: 1fr; }
-
-      .macro-bar-row {
-        grid-template-columns: 3.75rem 1fr;
-      }
-
-      .macro-nums {
-        grid-column: 2;
-        text-align: left;
-        min-width: 0;
-      }
     }
   </style>
 </head>
-<body data-view="opening">
-  <section id="opening" aria-label="Welcome">
-    <div class="opening-atmosphere" aria-hidden="true">
-      <div class="plane"></div>
-      <div class="horizon"></div>
-    </div>
-    <div class="opening-copy">
-      <h1 class="opening-brand">Prompt2UI</h1>
-      <p class="opening-headline">One personal app. Local-first. Your cloud.</p>
-      <p class="opening-support">
-        Clone, replace <code style="color:var(--accent-2);font-size:0.9em">app/</code>, open on your devices.
-        Sync stays in Settings — never invent it in UI code.
-      </p>
-      <div class="opening-cta">
-        <button type="button" class="btn btn-primary btn-lg" id="btn-open-app">Open app</button>
-        <button type="button" class="btn btn-ghost btn-lg" data-open-settings>Settings / Sync</button>
-      </div>
-    </div>
-  </section>
-
+<body>
   <div id="app">
     <aside id="sidebar" aria-label="App">
-      <button type="button" class="sidebar-brand" id="btn-home" title="Back to opening">
+      <div class="sidebar-brand" title="Prompt2UI">
         <div class="brand-glyph" aria-hidden="true">P</div>
         <div class="brand-text-wrap">
           <div class="brand-text">Prompt2UI</div>
-          <div class="brand-tag">Local · E2EE</div>
+          <div class="brand-tag">Blank starter</div>
         </div>
-      </button>
+      </div>
 
       <div class="sidebar-foot">
         <button type="button" class="nav-item" id="btn-settings" data-open-settings>

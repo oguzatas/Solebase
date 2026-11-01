@@ -1,7 +1,7 @@
 /**
- * app/calorie-tracker.js — Sample personal app: Calorie & Macro Tracker
+ * app/calorie-tracker.js — Calorie & Macro Tracker (use-ready example)
  *
- * Quiet-utility sample. Uses only the collections facade — never adapters or sync:
+ * Quiet utility. Uses only the collections facade — never adapters or sync:
  *   import { db } from '../core/db-api.js';
  */
 
@@ -46,7 +46,6 @@ function pct(value, goal) {
 }
 
 /**
- * Mount the Calorie & Macro Tracker into a container element.
  * @param {HTMLElement} root
  */
 export async function mount(root) {
@@ -59,9 +58,9 @@ export async function mount(root) {
     <div class="micro-app calorie-app" data-app="calorie-tracker">
       <header class="micro-header">
         <div>
-          <p class="micro-eyebrow">Sample</p>
-          <h2 class="micro-title">Calorie Tracker</h2>
-          <p class="micro-sub">Local CRUD via <code>db.collection('meals')</code>.</p>
+          <p class="micro-eyebrow">Today’s intake</p>
+          <h2 class="micro-title">Meals</h2>
+          <p class="micro-sub">Log food. Watch macros against your goals.</p>
         </div>
         <label class="date-filter">
           <span>Day</span>
@@ -97,7 +96,7 @@ export async function mount(root) {
           </label>
         </div>
         <div class="form-actions">
-          <button type="submit" class="btn btn-primary">Add</button>
+          <button type="submit" class="btn btn-primary">Add meal</button>
           <button type="button" class="btn btn-ghost" id="ct-goals-btn">Goals</button>
         </div>
       </form>
@@ -150,7 +149,7 @@ export async function mount(root) {
 
   function renderList(dayItems) {
     if (!dayItems.length) {
-      listEl.innerHTML = `<li class="empty-state">No entries for this day.</li>`;
+      listEl.innerHTML = `<li class="empty-state">No meals yet — add the first one above.</li>`;
       return;
     }
     listEl.innerHTML = dayItems
