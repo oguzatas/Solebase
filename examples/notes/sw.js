@@ -2,7 +2,7 @@
  * sw.js — Notes example service worker
  */
 
-const CACHE = 'notes-v4';
+const CACHE = 'notes-v5';
 
 const PRECACHE = [
   './',
@@ -57,15 +57,16 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Network first so a refresh picks up UI fixes instead of a stale shell
   event.respondWith(
-    caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((res) => {
-        if (!res.ok) return res;
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(request, copy));
+    fetch(request)
+      .then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(request, copy));
+        }
         return res;
-      });
-    })
+      })
+      .catch(() => caches.match(request))
   );
 });

@@ -156,22 +156,24 @@
 }
 
 .vault-stage {
-  --vault-w: 0px;
-  --context-w: 0px;
   position: relative;
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: var(--vault-w) minmax(0, 1fr) var(--context-w);
+  grid-template-columns: 0px minmax(0, 1fr) 0px;
   transition: grid-template-columns 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.vault.vault-open {
-  --vault-w: min(17.5rem, 42vw);
+.vault.vault-open .vault-stage {
+  grid-template-columns: min(17.5rem, 42vw) minmax(0, 1fr) 0px;
 }
 
-.vault.context-open {
-  --context-w: min(14rem, 36vw);
+.vault.context-open .vault-stage {
+  grid-template-columns: 0px minmax(0, 1fr) min(14rem, 36vw);
+}
+
+.vault.vault-open.context-open .vault-stage {
+  grid-template-columns: min(17.5rem, 42vw) minmax(0, 1fr) min(14rem, 36vw);
 }
 
 .vault-editor {
@@ -726,9 +728,10 @@
 }
 
 @media (max-width: 720px) {
-  .vault-stage {
-    --vault-w: 0px;
-    --context-w: 0px;
+  .vault-stage,
+  .vault.vault-open .vault-stage,
+  .vault.context-open .vault-stage,
+  .vault.vault-open.context-open .vault-stage {
     grid-template-columns: 1fr;
   }
 
