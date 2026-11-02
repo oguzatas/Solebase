@@ -2,7 +2,7 @@
  * sw.js — Notes example service worker
  */
 
-const CACHE = 'notes-v3';
+const CACHE = 'notes-v4';
 
 const PRECACHE = [
   './',

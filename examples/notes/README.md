@@ -34,10 +34,11 @@ Manual **Export vault** / **Import vault** works offline without a cloud adapter
 | Markdown | GFM: headings, lists, fences, tables, blockquotes, tasks, images by URL |
 | Wiki-links | `[[Note Title]]` — open or create; outline / backlinks / outgoing in context drawer |
 | Search | One field: text, `#tag`, `path:folder` (no filter dropdowns) |
-| Vault | Nested paths, pin, new / rename / delete |
+| Vault | Push sidebar (stays open); nested paths; pin; **right-click** rename/delete |
+| Folders | Folder icon or right-click → New folder (`db.collection('folders')` + note paths) |
 | Daily | Calendar icon → `YYYY-MM-DD` under `daily/` |
-| Shortcuts | `Ctrl/Cmd+S` save, `+N` new, `+P` switcher, `+O` vault drawer, `Esc` closes drawers |
-| Persistence | `db.collection('notes')` + `updatedAt`; Settings sync unchanged |
+| Shortcuts | `Ctrl/Cmd+S` save, `+N` new, `+P` switcher, `+O` toggle vault, `Esc` closes menus/context |
+| Persistence | `notes` + `folders` collections; Settings sync unchanged |
 
 ## Note shape
 

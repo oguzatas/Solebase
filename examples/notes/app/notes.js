@@ -1,10 +1,11 @@
 /**
- * app/notes.js — Personal Markdown vault (editor-first)
+ * app/notes.js — Personal Markdown vault (editor-first, push sidebars)
  *
  * Collections only — never adapters or sync:
  *   import { db } from '../core/db-api.js';
  *
  * Note shape: { title, body, folder, tags: string[], pinned?: boolean }
+ * Folder shape: { path: string }
  */
 
 import { basicSetup, EditorView } from 'codemirror';
@@ -22,10 +23,12 @@ import {
 } from './markdown.js';
 
 const NOTES = 'notes';
+const FOLDERS = 'folders';
 
 const I = {
   menu: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>`,
   plus: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
+  folder: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M3 7h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/><path d="M3 7V5a2 2 0 0 1 2-2h4l2 2"/></svg>`,
   calendar: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>`,
   search: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16.5 16.5 21 21"/></svg>`,
   panel: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>`,
@@ -80,7 +83,6 @@ function fuzzyScore(query, text) {
   return score;
 }
 
-/** Parse search: `#tag`, `path:folder`, rest is free text. */
 function parseQuery(raw) {
   const tokens = String(raw || '').trim().split(/\s+/).filter(Boolean);
   const tags = [];
@@ -103,28 +105,35 @@ function parseQuery(raw) {
  */
 export async function mount(root) {
   const notes = db.collection(NOTES);
+  const foldersCol = db.collection(FOLDERS);
   /** @type {string|null} */
   let activeId = null;
   let query = '';
   /** @type {'edit'|'preview'|'split'} */
   let viewMode = 'edit';
   let saveTimer = null;
-  let unsub = null;
+  let unsubNotes = null;
+  let unsubFolders = null;
   /** @type {object[]} */
   let cache = [];
+  /** @type {string[]} */
+  let folderPaths = [];
   let treeCollapsed = new Set();
   /** @type {EditorView|null} */
   let cmView = null;
   let applyingDoc = false;
-  let vaultOpen = false;
+  let vaultOpen = true;
   let contextOpen = false;
+  /** @type {{ kind: 'note'|'folder'|'blank', id?: string, path?: string } | null} */
+  let menuTarget = null;
 
   root.innerHTML = `
-    <div class="vault" data-app="notes">
+    <div class="vault vault-open" data-app="notes">
       <header class="vault-bar" role="toolbar" aria-label="Notes">
         <div class="vault-bar-left">
-          <button type="button" class="icon-btn" id="n-toggle-vault" aria-label="Notes list" title="Notes list" aria-expanded="false">${I.menu}</button>
+          <button type="button" class="icon-btn" id="n-toggle-vault" aria-label="Notes list" title="Notes list" aria-expanded="true">${I.menu}</button>
           <button type="button" class="icon-btn" id="n-new" aria-label="New note" title="New note (Ctrl/Cmd+N)">${I.plus}</button>
+          <button type="button" class="icon-btn" id="n-new-folder" aria-label="New folder" title="New folder">${I.folder}</button>
           <button type="button" class="icon-btn" id="n-daily" aria-label="Daily note" title="Today’s note">${I.calendar}</button>
           <button type="button" class="icon-btn" id="n-switcher" aria-label="Quick switcher" title="Quick switcher (Ctrl/Cmd+P)">${I.search}</button>
         </div>
@@ -154,10 +163,14 @@ export async function mount(root) {
       <div class="vault-stage">
         <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
 
-        <aside class="vault-drawer" id="vault-drawer" aria-label="Vault" aria-hidden="true">
+        <aside class="vault-drawer" id="vault-drawer" aria-label="Vault" aria-hidden="false">
           <div class="drawer-head">
             <span class="drawer-label">Notes</span>
-            <button type="button" class="icon-btn" id="n-close-vault" aria-label="Close list">${I.close}</button>
+            <div class="drawer-head-actions">
+              <button type="button" class="icon-btn" id="n-drawer-new" aria-label="New note" title="New note">${I.plus}</button>
+              <button type="button" class="icon-btn" id="n-drawer-folder" aria-label="New folder" title="New folder">${I.folder}</button>
+              <button type="button" class="icon-btn" id="n-close-vault" aria-label="Close list">${I.close}</button>
+            </div>
           </div>
           <div class="drawer-search">
             <input type="search" id="n-search" placeholder="Search · #tag · path:folder" autocomplete="off" />
@@ -168,7 +181,7 @@ export async function mount(root) {
         <section class="vault-editor" id="n-editor" aria-label="Editor">
           <div class="vault-empty" id="n-empty">
             <p class="vault-empty-title">No note open</p>
-            <p class="vault-empty-copy">Press <kbd>+</kbd> or <kbd>Ctrl</kbd>+<kbd>N</kbd>. Daily note from the calendar icon. Jump with <kbd>Ctrl</kbd>+<kbd>P</kbd>.</p>
+            <p class="vault-empty-copy">New note with <kbd>+</kbd>, folder with the folder icon, or <kbd>Ctrl</kbd>+<kbd>P</kbd> to jump. Right-click the list to rename or delete.</p>
           </div>
           <div class="vault-form hidden" id="n-form">
             <div class="vault-panes" id="n-panes" data-mode="edit">
@@ -199,6 +212,13 @@ export async function mount(root) {
           </div>
         </aside>
       </div>
+    </div>
+
+    <div class="ctx-menu" id="ctx-menu" hidden role="menu">
+      <button type="button" role="menuitem" data-act="rename">Rename</button>
+      <button type="button" role="menuitem" data-act="delete">Delete</button>
+      <button type="button" role="menuitem" data-act="new-note">New note here</button>
+      <button type="button" role="menuitem" data-act="new-folder">New folder</button>
     </div>
 
     <div class="switcher-backdrop" id="switcher-backdrop" hidden></div>
@@ -236,6 +256,7 @@ export async function mount(root) {
   const switcherInput = root.querySelector('#switcher-input');
   const switcherList = root.querySelector('#switcher-list');
   const metaEl = root.querySelector('#n-meta');
+  const ctxMenu = root.querySelector('#ctx-menu');
 
   let switcherIndex = 0;
   /** @type {object[]} */
@@ -268,6 +289,22 @@ export async function mount(root) {
     return collectTags(n.body || '', Array.isArray(n.tags) ? n.tags : []);
   }
 
+  function allFolderPaths() {
+    const set = new Set(folderPaths.map(normalizeFolder).filter(Boolean));
+    for (const n of cache) {
+      const f = normalizeFolder(n.folder);
+      if (!f) continue;
+      set.add(f);
+      const parts = f.split('/');
+      let acc = '';
+      for (const part of parts) {
+        acc = acc ? `${acc}/${part}` : part;
+        set.add(acc);
+      }
+    }
+    return [...set].sort();
+  }
+
   function filtered() {
     const { tags, path, text } = parseQuery(query);
     return cache
@@ -293,8 +330,14 @@ export async function mount(root) {
   }
 
   function refreshFolderList() {
-    const folders = [...new Set(cache.map((n) => normalizeFolder(n.folder)).filter(Boolean))].sort();
+    const folders = allFolderPaths();
     folderListEl.innerHTML = folders.map((f) => `<option value="${escapeHtml(f)}"></option>`).join('');
+  }
+
+  function patchCache(id, patch) {
+    const i = cache.findIndex((n) => n.id === id);
+    if (i < 0) return;
+    cache[i] = { ...cache[i], ...patch };
   }
 
   function buildTree(rows) {
@@ -315,9 +358,8 @@ export async function mount(root) {
       return node;
     }
 
-    for (const n of rows) {
-      ensureFolder(normalizeFolder(n.folder)).notes.push(n);
-    }
+    for (const path of allFolderPaths()) ensureFolder(path);
+    for (const n of rows) ensureFolder(normalizeFolder(n.folder)).notes.push(n);
     return rootNode;
   }
 
@@ -328,7 +370,7 @@ export async function mount(root) {
       const collapsed = treeCollapsed.has(folder.path);
       parts.push(`
         <div class="tree-folder">
-          <button type="button" class="tree-folder-btn" style="--depth:${depth}" data-toggle-folder="${escapeHtml(folder.path)}" aria-expanded="${collapsed ? 'false' : 'true'}">
+          <button type="button" class="tree-folder-btn" style="--depth:${depth}" data-toggle-folder="${escapeHtml(folder.path)}" data-folder-path="${escapeHtml(folder.path)}" aria-expanded="${collapsed ? 'false' : 'true'}">
             <span class="tree-chevron">${collapsed ? '▸' : '▾'}</span>
             <span class="tree-folder-name">${escapeHtml(folder.name)}</span>
           </button>
@@ -362,13 +404,15 @@ export async function mount(root) {
   function renderTree() {
     const rows = filtered();
     const parsed = parseQuery(query);
-    if (!rows.length) {
-      const emptyMsg =
-        cache.length === 0 ? 'Empty vault. Create a note.' : 'No matches.';
-      treeEl.innerHTML = `<p class="tree-empty">${emptyMsg}</p>`;
+    if (!rows.length && !allFolderPaths().length) {
+      treeEl.innerHTML = `<p class="tree-empty">Empty vault. New note or folder to start.</p>`;
       return;
     }
     if (parsed.text || parsed.tags.length || parsed.path) {
+      if (!rows.length) {
+        treeEl.innerHTML = `<p class="tree-empty">No matches.</p>`;
+        return;
+      }
       treeEl.innerHTML = rows
         .map((n) => {
           const active = n.id === activeId ? ' is-active' : '';
@@ -450,15 +494,16 @@ export async function mount(root) {
       : '<li class="side-empty">No wiki-links</li>';
   }
 
+  function isMobile() {
+    return window.matchMedia('(max-width: 720px)').matches;
+  }
+
   function setVaultOpen(open) {
     vaultOpen = open;
     vaultEl.classList.toggle('vault-open', open);
     vaultDrawer.setAttribute('aria-hidden', open ? 'false' : 'true');
     toggleVaultBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
     syncBackdrop();
-    if (open) {
-      requestAnimationFrame(() => searchEl.focus());
-    }
   }
 
   function setContextOpen(open) {
@@ -470,13 +515,8 @@ export async function mount(root) {
   }
 
   function syncBackdrop() {
-    const any = vaultOpen || contextOpen;
-    drawerBackdrop.hidden = !any;
-  }
-
-  function closeDrawers() {
-    setVaultOpen(false);
-    setContextOpen(false);
+    // Backdrop only for overlay mode on small screens
+    drawerBackdrop.hidden = !(isMobile() && (vaultOpen || contextOpen));
   }
 
   function loadActive() {
@@ -505,7 +545,7 @@ export async function mount(root) {
       persistActive().catch((err) => {
         hintEl.textContent = err.message || 'Save failed';
       });
-    }, 320);
+    }, 280);
   }
 
   async function persistActive() {
@@ -523,21 +563,120 @@ export async function mount(root) {
       tags,
       pinned: !!pinBtn.classList.contains('is-on'),
     };
+    patchCache(activeId, patch);
+    renderTree();
     await notes.update(activeId, patch);
+    if (patch.folder) await ensureFolderRecord(patch.folder);
     hintEl.textContent = 'Saved';
     refreshPreview();
     refreshSidePanels();
   }
 
+  async function ensureFolderRecord(path) {
+    const p = normalizeFolder(path);
+    if (!p) return;
+    if (folderPaths.includes(p)) return;
+    const parts = p.split('/');
+    let acc = '';
+    for (const part of parts) {
+      acc = acc ? `${acc}/${part}` : part;
+      if (!folderPaths.includes(acc)) {
+        await foldersCol.add({ path: acc });
+      }
+    }
+  }
+
   async function createNote(seed = {}) {
+    const folder = normalizeFolder(seed.folder || '');
+    if (folder) await ensureFolderRecord(folder);
     const row = await notes.add({
       title: seed.title || 'Untitled',
       body: seed.body || '',
-      folder: normalizeFolder(seed.folder || ''),
+      folder,
       tags: seed.tags || [],
       pinned: !!seed.pinned,
     });
     activeId = row.id;
+    return row;
+  }
+
+  async function createFolder(pathHint = '') {
+    const raw = window.prompt('Folder path', pathHint || 'projects');
+    if (raw == null) return;
+    const path = normalizeFolder(raw);
+    if (!path) return;
+    await ensureFolderRecord(path);
+    treeCollapsed.delete(path);
+    setVaultOpen(true);
+  }
+
+  async function renameNote(id) {
+    const note = cache.find((n) => n.id === id);
+    if (!note) return;
+    const next = window.prompt('Rename note', note.title || 'Untitled');
+    if (next == null) return;
+    const title = next.trim() || 'Untitled';
+    patchCache(id, { title });
+    if (id === activeId) titleEl.value = title;
+    renderTree();
+    await notes.update(id, { title });
+    hintEl.textContent = 'Saved';
+  }
+
+  async function renameFolder(path) {
+    const next = window.prompt('Rename folder path', path);
+    if (next == null) return;
+    const newPath = normalizeFolder(next);
+    if (!newPath || newPath === path) return;
+
+    const affected = cache.filter((n) => {
+      const f = normalizeFolder(n.folder);
+      return f === path || f.startsWith(`${path}/`);
+    });
+    for (const n of affected) {
+      const f = normalizeFolder(n.folder);
+      const updated = f === path ? newPath : `${newPath}${f.slice(path.length)}`;
+      patchCache(n.id, { folder: updated });
+      await notes.update(n.id, { folder: updated });
+    }
+
+    const folderRows = await foldersCol.get();
+    for (const row of folderRows) {
+      const f = normalizeFolder(row.path);
+      if (f === path || f.startsWith(`${path}/`)) {
+        const updated = f === path ? newPath : `${newPath}${f.slice(path.length)}`;
+        await foldersCol.update(row.id, { path: updated });
+      }
+    }
+    await ensureFolderRecord(newPath);
+    if (activeId) {
+      const active = cache.find((n) => n.id === activeId);
+      if (active) folderEl.value = active.folder || '';
+    }
+    renderTree();
+  }
+
+  async function deleteFolder(path) {
+    const affected = cache.filter((n) => {
+      const f = normalizeFolder(n.folder);
+      return f === path || f.startsWith(`${path}/`);
+    });
+    if (affected.length) {
+      if (!confirm(`Delete folder “${path}” and ${affected.length} note(s)?`)) return;
+      for (const n of affected) {
+        if (n.id === activeId) activeId = null;
+        await notes.remove(n.id);
+      }
+    } else if (!confirm(`Remove empty folder “${path}”?`)) {
+      return;
+    }
+    const folderRows = await foldersCol.get();
+    for (const row of folderRows) {
+      const f = normalizeFolder(row.path);
+      if (f === path || f.startsWith(`${path}/`)) {
+        await foldersCol.remove(row.id);
+      }
+    }
   }
 
   async function openOrCreateByTitle(title, { folder = '', body } = {}) {
@@ -547,7 +686,6 @@ export async function mount(root) {
       activeId = existing.id;
       renderTree();
       loadActive();
-      closeDrawers();
       return existing;
     }
     if (activeId) await persistActive();
@@ -557,11 +695,10 @@ export async function mount(root) {
       body: body ?? `# ${title}\n\n`,
       tags: [],
     });
-    closeDrawers();
     return null;
   }
 
-  function paint(all) {
+  function paintNotes(all) {
     cache = all;
     refreshFolderList();
     if (activeId && !cache.some((n) => n.id === activeId)) {
@@ -584,6 +721,7 @@ export async function mount(root) {
       document.activeElement === tagsEl ||
       (cmView && cmView.hasFocus);
     if (editing) {
+      // Keep typed title; still refresh tree from cache (optimistic patches included)
       showEditor(true);
       renderTree();
       refreshSidePanels();
@@ -591,6 +729,34 @@ export async function mount(root) {
       return;
     }
     loadActive();
+  }
+
+  function paintFolders(rows) {
+    folderPaths = rows.map((r) => normalizeFolder(r.path)).filter(Boolean);
+    refreshFolderList();
+    renderTree();
+  }
+
+  function hideCtxMenu() {
+    ctxMenu.hidden = true;
+    menuTarget = null;
+  }
+
+  function showCtxMenu(x, y, target) {
+    menuTarget = target;
+    const renameBtn = ctxMenu.querySelector('[data-act="rename"]');
+    const deleteBtn = ctxMenu.querySelector('[data-act="delete"]');
+    renameBtn.hidden = !(target.kind === 'note' || target.kind === 'folder');
+    deleteBtn.hidden = !(target.kind === 'note' || target.kind === 'folder');
+    renameBtn.textContent = target.kind === 'folder' ? 'Rename folder' : 'Rename';
+    deleteBtn.textContent = target.kind === 'folder' ? 'Delete folder' : 'Delete';
+
+    ctxMenu.hidden = false;
+    const rect = ctxMenu.getBoundingClientRect();
+    const left = Math.min(x, window.innerWidth - rect.width - 8);
+    const top = Math.min(y, window.innerHeight - rect.height - 8);
+    ctxMenu.style.left = `${Math.max(8, left)}px`;
+    ctxMenu.style.top = `${Math.max(8, top)}px`;
   }
 
   function initEditor() {
@@ -652,7 +818,6 @@ export async function mount(root) {
   }
 
   function openSwitcher() {
-    closeDrawers();
     switcherEl.hidden = false;
     switcherBackdrop.hidden = false;
     switcherInput.value = '';
@@ -704,30 +869,26 @@ export async function mount(root) {
   }
 
   initEditor();
-  unsub = notes.subscribe(paint);
+  unsubNotes = notes.subscribe(paintNotes);
+  unsubFolders = foldersCol.subscribe(paintFolders);
   applyViewMode();
   showEditor(false);
+  setVaultOpen(true);
 
-  toggleVaultBtn.addEventListener('click', () => {
-    if (vaultOpen) setVaultOpen(false);
-    else {
-      setContextOpen(false);
-      setVaultOpen(true);
-    }
-  });
+  toggleVaultBtn.addEventListener('click', () => setVaultOpen(!vaultOpen));
   root.querySelector('#n-close-vault').addEventListener('click', () => setVaultOpen(false));
 
-  toggleContextBtn.addEventListener('click', () => {
-    if (contextOpen) setContextOpen(false);
-    else {
-      setVaultOpen(false);
-      setContextOpen(true);
-    }
-  });
+  toggleContextBtn.addEventListener('click', () => setContextOpen(!contextOpen));
   root.querySelector('#n-close-context').addEventListener('click', () => setContextOpen(false));
-  drawerBackdrop.addEventListener('click', closeDrawers);
+  drawerBackdrop.addEventListener('click', () => {
+    if (!isMobile()) return;
+    setVaultOpen(false);
+    setContextOpen(false);
+  });
+  window.addEventListener('resize', syncBackdrop);
 
   treeEl.addEventListener('click', async (e) => {
+    hideCtxMenu();
     const toggle = e.target.closest('[data-toggle-folder]');
     if (toggle) {
       const path = toggle.getAttribute('data-toggle-folder');
@@ -742,7 +903,59 @@ export async function mount(root) {
     activeId = btn.getAttribute('data-id');
     renderTree();
     loadActive();
-    setVaultOpen(false);
+    // Keep vault open; only collapse on mobile overlay to give editor room
+    if (isMobile()) setVaultOpen(false);
+  });
+
+  treeEl.addEventListener('contextmenu', (e) => {
+    const noteBtn = e.target.closest('.tree-note[data-id]');
+    const folderBtn = e.target.closest('[data-folder-path]');
+    e.preventDefault();
+    if (noteBtn) {
+      showCtxMenu(e.clientX, e.clientY, { kind: 'note', id: noteBtn.getAttribute('data-id') });
+      return;
+    }
+    if (folderBtn) {
+      showCtxMenu(e.clientX, e.clientY, {
+        kind: 'folder',
+        path: folderBtn.getAttribute('data-folder-path'),
+      });
+      return;
+    }
+    showCtxMenu(e.clientX, e.clientY, { kind: 'blank' });
+  });
+
+  ctxMenu.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn || !menuTarget) return;
+    const act = btn.getAttribute('data-act');
+    const target = menuTarget;
+    hideCtxMenu();
+
+    if (act === 'rename' && target.kind === 'note') {
+      await renameNote(target.id);
+    } else if (act === 'rename' && target.kind === 'folder') {
+      await renameFolder(target.path);
+    } else if (act === 'delete' && target.kind === 'note') {
+      const note = cache.find((n) => n.id === target.id);
+      if (!confirm(`Delete “${note?.title || 'note'}”?`)) return;
+      if (activeId === target.id) activeId = null;
+      await notes.remove(target.id);
+    } else if (act === 'delete' && target.kind === 'folder') {
+      await deleteFolder(target.path);
+    } else if (act === 'new-note') {
+      if (activeId) await persistActive();
+      const folder = target.kind === 'folder' ? target.path : normalizeFolder(folderEl.value);
+      await createNote({ title: 'Untitled', folder, body: '' });
+      setVaultOpen(true);
+    } else if (act === 'new-folder') {
+      const base = target.kind === 'folder' ? `${target.path}/` : '';
+      await createFolder(base);
+    }
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!ctxMenu.hidden && !ctxMenu.contains(e.target)) hideCtxMenu();
   });
 
   searchEl.addEventListener('input', () => {
@@ -750,11 +963,22 @@ export async function mount(root) {
     renderTree();
   });
 
-  root.querySelector('#n-new').addEventListener('click', async () => {
+  async function onNewNote() {
     if (activeId) await persistActive();
-    await createNote({ title: 'Untitled', body: '' });
-    setVaultOpen(false);
-  });
+    await createNote({
+      title: 'Untitled',
+      folder: normalizeFolder(folderEl.value),
+      body: '',
+    });
+    setVaultOpen(true);
+    titleEl.focus();
+    titleEl.select();
+  }
+
+  root.querySelector('#n-new').addEventListener('click', onNewNote);
+  root.querySelector('#n-drawer-new').addEventListener('click', onNewNote);
+  root.querySelector('#n-new-folder').addEventListener('click', () => createFolder(''));
+  root.querySelector('#n-drawer-folder').addEventListener('click', () => createFolder(''));
 
   root.querySelector('#n-daily').addEventListener('click', async () => {
     const title = todayTitle();
@@ -763,11 +987,12 @@ export async function mount(root) {
       if (activeId) await persistActive();
       activeId = existing.id;
       if (normalizeFolder(existing.folder) !== 'daily') {
+        patchCache(existing.id, { folder: 'daily' });
         await notes.update(existing.id, { folder: 'daily' });
+        await ensureFolderRecord('daily');
       }
       renderTree();
       loadActive();
-      closeDrawers();
       return;
     }
     if (activeId) await persistActive();
@@ -777,7 +1002,6 @@ export async function mount(root) {
       tags: ['daily'],
       body: `# ${title}\n\n## Notes\n\n- [ ] \n\n## Log\n\n`,
     });
-    closeDrawers();
   });
 
   root.querySelector('#n-switcher').addEventListener('click', openSwitcher);
@@ -805,9 +1029,22 @@ export async function mount(root) {
     });
   });
 
-  for (const el of [titleEl, folderEl, tagsEl]) {
-    el.addEventListener('input', scheduleSave);
-  }
+  titleEl.addEventListener('input', () => {
+    if (!activeId) return;
+    const title = titleEl.value.trim() || 'Untitled';
+    patchCache(activeId, { title });
+    renderTree();
+    scheduleSave();
+  });
+
+  folderEl.addEventListener('input', () => {
+    if (!activeId) return;
+    patchCache(activeId, { folder: normalizeFolder(folderEl.value) });
+    renderTree();
+    scheduleSave();
+  });
+
+  tagsEl.addEventListener('input', scheduleSave);
 
   previewEl.addEventListener('click', async (e) => {
     const a = e.target.closest('a[data-wiki], a[href^="#wiki:"]');
@@ -843,7 +1080,6 @@ export async function mount(root) {
       activeId = link.getAttribute('data-id');
       renderTree();
       loadActive();
-      setContextOpen(false);
     }
   });
 
@@ -883,14 +1119,19 @@ export async function mount(root) {
     const mod = e.metaKey || e.ctrlKey;
 
     if (e.key === 'Escape') {
+      if (!ctxMenu.hidden) {
+        e.preventDefault();
+        hideCtxMenu();
+        return;
+      }
       if (!switcherEl.hidden) {
         e.preventDefault();
         closeSwitcher();
         return;
       }
-      if (vaultOpen || contextOpen) {
+      if (contextOpen) {
         e.preventDefault();
-        closeDrawers();
+        setContextOpen(false);
       }
       return;
     }
@@ -902,7 +1143,7 @@ export async function mount(root) {
     }
     if (mod && e.key.toLowerCase() === 'n') {
       e.preventDefault();
-      root.querySelector('#n-new').click();
+      onNewNote();
       return;
     }
     if (mod && e.key.toLowerCase() === 'p') {
@@ -912,7 +1153,7 @@ export async function mount(root) {
     }
     if (mod && e.key.toLowerCase() === 'o') {
       e.preventDefault();
-      toggleVaultBtn.click();
+      setVaultOpen(!vaultOpen);
     }
   }
 
@@ -923,7 +1164,9 @@ export async function mount(root) {
     unmount() {
       clearTimeout(saveTimer);
       window.removeEventListener('keydown', onGlobalKey);
-      if (unsub) unsub();
+      window.removeEventListener('resize', syncBackdrop);
+      if (unsubNotes) unsubNotes();
+      if (unsubFolders) unsubFolders();
       if (cmView) {
         cmView.destroy();
         cmView = null;
