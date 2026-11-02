@@ -627,6 +627,54 @@
       color: var(--accent-2);
     }
 
+    .share-url-row {
+      display: flex;
+      gap: 0.45rem;
+      align-items: stretch;
+    }
+
+    .share-url-row input {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .share-qr-wrap {
+      display: flex;
+      justify-content: center;
+      margin: 0.35rem 0 0.65rem;
+      padding: 0.75rem;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 0.4rem;
+    }
+
+    .share-qr-wrap canvas {
+      display: block;
+      width: 168px;
+      height: 168px;
+      border-radius: 0.25rem;
+    }
+
+    .settings-tips {
+      margin: 0;
+      padding-left: 1.1rem;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      line-height: 1.45;
+    }
+
+    .settings-tips li {
+      margin-bottom: 0.35rem;
+    }
+
+    .settings-tips li:last-child {
+      margin-bottom: 0;
+    }
+
+    #cfg-share-localhost-tip {
+      color: var(--warn);
+    }
+
     .settings-actions {
       display: flex;
       flex-wrap: wrap;
@@ -759,6 +807,26 @@
       </button>
     </div>
     <div class="settings-body">
+      <section class="settings-section" id="cfg-share-section">
+        <h3>Share</h3>
+        <p class="settings-hint">Opens this same origin on another device. Does <strong>not</strong> install a native app, and does <strong>not</strong> sync data by itself — each device keeps its own IndexedDB unless you configure Sync below.</p>
+        <label class="settings-field">
+          <span>This origin</span>
+          <div class="share-url-row">
+            <input type="text" id="cfg-share-url" readonly autocomplete="off" spellcheck="false" />
+            <button type="button" class="btn btn-ghost" id="cfg-share-copy">Copy</button>
+          </div>
+        </label>
+        <div class="share-qr-wrap">
+          <canvas id="cfg-share-qr" width="168" height="168" role="img" aria-label="QR code for this page URL"></canvas>
+        </div>
+        <ul class="settings-tips">
+          <li>Install / Add to Home Screen from the browser menu for an app-like icon (PWA).</li>
+          <li>After the first visit, the service worker + local IndexedDB keep the app usable offline. Losing internet ≠ losing the app once cached.</li>
+          <li id="cfg-share-localhost-tip" hidden>localhost cannot be opened usefully on a phone for E2EE — deploy over HTTPS or use a TLS tunnel (Cloudflare Tunnel / ngrok), then scan this QR.</li>
+        </ul>
+      </section>
+
       <section class="settings-section">
         <h3>Storage backend</h3>
         <label class="settings-field">

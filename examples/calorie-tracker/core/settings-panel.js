@@ -1,8 +1,11 @@
 /**
- * settings-panel.js — Settings UI (backend, passphrase, export/import)
+ * settings-panel.js — Settings UI (share, backend, passphrase, export/import)
  *
  * Extracted from the old multi-app shell. Choosing a remote adapter +
  * passphrase enables SyncEngine automatically (debounced pull/merge/push).
+ *
+ * Share = same origin URL + QR. Host is a file server only — not a database.
+ * Sync (encrypted snapshot) is optional and separate from hosting.
  */
 
 import { encryptPayload, decryptPayload } from './prompt-crypto.js';
@@ -18,11 +21,27 @@ import { syncEngine } from './sync-engine.js';
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
+/** CDN QR lib (zero-build). Loaded once on first Share paint. */
+const QR_MODULE_URL = 'https://esm.sh/qrcode@1.5.4';
+
 /** @type {string} session-only passphrase */
 let sessionPassphrase = '';
 
 /** @type {(msg: string, type?: string) => void} */
 let toastFn = (msg) => console.log('[settings]', msg);
+
+/** @type {Promise<typeof import('https://esm.sh/qrcode@1.5.4')> | null} */
+let qrModulePromise = null;
+
+function loadQrModule() {
+  if (!qrModulePromise) {
+    qrModulePromise = import(QR_MODULE_URL).catch((err) => {
+      qrModulePromise = null;
+      throw err;
+    });
+  }
+  return qrModulePromise;
+}
 
 export function getSessionPassphrase() {
   return sessionPassphrase;
@@ -68,13 +87,14 @@ export function initSettingsPanel(opts = {}) {
     drawer.setAttribute('aria-hidden', 'true');
   }
 
-  // Opening CTA + sidebar use data-open-settings; fall back to #btn-settings
-  const settingsTriggers = $$('[data-open-settings]');
-  if (settingsTriggers.length) {
-    settingsTriggers.forEach((el) => el.addEventListener('click', openSettings));
-  } else {
-    $('#btn-settings')?.addEventListener('click', openSettings);
-  }
+  // Delegate so gear works even when the app mounts after init
+  document.addEventListener('click', (e) => {
+    const trigger = e.target.closest?.('[data-open-settings], #btn-settings');
+    if (trigger) {
+      e.preventDefault();
+      openSettings();
+    }
+  });
   $('#btn-close-settings')?.addEventListener('click', closeSettings);
   backdrop?.addEventListener('click', closeSettings);
 
@@ -171,6 +191,25 @@ export function initSettingsPanel(opts = {}) {
     e.target.value = '';
   });
 
+  $('#cfg-share-copy')?.addEventListener('click', async () => {
+    const url = $('#cfg-share-url')?.value || location.href;
+    try {
+      await navigator.clipboard.writeText(url);
+      toastFn('URL copied', 'ok');
+    } catch {
+      // Fallback for older / insecure contexts
+      const input = $('#cfg-share-url');
+      if (input) {
+        input.focus();
+        input.select();
+        document.execCommand('copy');
+        toastFn('URL copied', 'ok');
+      } else {
+        toastFn('Could not copy URL', 'err');
+      }
+    }
+  });
+
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeSettings();
   });
@@ -201,6 +240,55 @@ function paintSettingsForm() {
 
   updateAdapterPanels(s.adapter);
   updateSyncStatus();
+  paintSharePanel();
+}
+
+function isLocalHostOrigin(hostname = location.hostname) {
+  return (
+    hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '[::1]' ||
+    hostname === '::1'
+  );
+}
+
+function paintSharePanel() {
+  const urlInput = $('#cfg-share-url');
+  const canvas = $('#cfg-share-qr');
+  const localTip = $('#cfg-share-localhost-tip');
+  if (!urlInput && !canvas) return;
+
+  const url = location.href.split('#')[0];
+  if (urlInput) urlInput.value = url;
+
+  if (localTip) {
+    localTip.hidden = !isLocalHostOrigin();
+  }
+
+  if (!canvas) return;
+
+  const fallback = () => {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#111419';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#6b7380';
+    ctx.font = '12px Figtree, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('QR unavailable', canvas.width / 2, canvas.height / 2);
+  };
+
+  loadQrModule()
+    .then((mod) => {
+      const QRCode = mod.default || mod;
+      return QRCode.toCanvas(canvas, url, {
+        width: 168,
+        margin: 1,
+        color: { dark: '#e6e9ee', light: '#111419' },
+        errorCorrectionLevel: 'M',
+      });
+    })
+    .catch(() => fallback());
 }
 
 function updateAdapterPanels(adapterId) {

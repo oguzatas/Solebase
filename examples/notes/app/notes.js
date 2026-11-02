@@ -151,7 +151,7 @@ export async function mount(root) {
           <button type="button" class="icon-btn" id="n-pin" aria-label="Pin note" title="Pin">${I.star}</button>
           <button type="button" class="icon-btn" id="n-delete" aria-label="Delete note" title="Delete">${I.trash}</button>
           <button type="button" class="icon-btn" id="n-toggle-context" aria-label="Outline and links" title="Outline &amp; links" aria-expanded="false">${I.panel}</button>
-          <button type="button" class="icon-btn" id="n-settings" data-open-settings aria-label="Settings" title="Settings">${I.gear}</button>
+          <button type="button" class="icon-btn" id="n-settings" data-open-settings aria-label="Settings" title="Settings · Share / install / sync">${I.gear}</button>
         </div>
       </header>
 
@@ -183,7 +183,7 @@ export async function mount(root) {
         <section class="vault-editor" id="n-editor" aria-label="Editor">
           <div class="vault-empty" id="n-empty">
             <p class="vault-empty-title">No note open</p>
-            <p class="vault-empty-copy">New note with <kbd>+</kbd>, folder with the folder icon, or <kbd>Ctrl</kbd>+<kbd>P</kbd> to jump. Right-click the list to rename or delete.</p>
+            <p class="vault-empty-copy">New note with <kbd>+</kbd>, folder with the folder icon, or <kbd>Ctrl</kbd>+<kbd>P</kbd> to jump. Gear → Share for install / QR; notes stay on this device unless you enable sync.</p>
           </div>
           <div class="vault-form hidden" id="n-form">
             <div class="vault-panes" id="n-panes" data-mode="edit">

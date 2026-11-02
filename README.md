@@ -6,6 +6,17 @@ One folder = one personal app. The **root** is a blank canvas. **examples/** are
 
 No npm bundler. Pure ES modules, Tailwind CDN, IndexedDB, Web Crypto, installable PWA.
 
+## Host vs sync vs offline (product truth)
+
+| Concept | What it is | What it is not |
+|---------|------------|----------------|
+| **Host** | A static file server (HTML/JS/CSS) — Cloudflare Pages, Netlify, any static origin | A shared database. Opening the same URL on two phones does **not** auto-sync notes. |
+| **Offline** | After first visit: service worker + **per-device IndexedDB**. Losing internet ≠ losing the app once installed/cached | Cross-device memory. Each browser profile has its own DB. |
+| **Sync** | Optional encrypted snapshot to Drive / WebDAV / S3 with a passphrase | Part of hosting. Configure it separately in Settings. |
+| **QR / Share** | Opens the **same origin** on another device | A native binary install. After open: configure sync **or** stay local-only on that device. |
+
+Ship guide (deploy, PWA install, tunnels): **[docs/SHIP.md](docs/SHIP.md)**. Settings → **Share** shows the current URL, Copy, and a QR code.
+
 ## Clone starter vs copy example
 
 | Goal | What to use |
@@ -106,7 +117,8 @@ Second device: same origin/files → same adapter config → same passphrase →
 - Not multiplayer CRDT — LWW for personal apps.  
 - Passphrase loss = encrypted cloud data unrecoverable.  
 - Snapshot sync suits KB–low-MB hobby data.  
-- Personal / hobby — no auth server or App Store wrapper.
+- Personal / hobby — no auth server or App Store wrapper.  
+- Static host ≠ sync; localhost QR is not phone-reachable — deploy HTTPS or use a TLS tunnel first.
 
 ## Smoke
 
