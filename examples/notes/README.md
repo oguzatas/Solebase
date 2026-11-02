@@ -11,7 +11,19 @@ python -m http.server 8082
 
 Open http://localhost:8082 — editor opens immediately (no app shell rail).
 
-Needs network once for CDN imports (CodeMirror, marked).
+Needs network once for CDN imports (CodeMirror, marked). Hard-refresh (`Ctrl/Cmd+Shift+R`) if an old service worker caches a stale shell.
+
+## Sync across devices
+
+There is no Prompt2UI server. Your notes stay in IndexedDB on each browser; optional **encrypted** sync uses a folder/object you control.
+
+1. Open **Settings** (gear in the top bar).
+2. Pick an adapter: **WebDAV** (Nextcloud etc.) or **S3-compatible** (R2/MinIO/S3). Google Drive is optional.
+3. Enter the same **passphrase** on every device (encrypts the vault; forgotten = unrecoverable).
+4. Fill adapter credentials → **Save settings** (turns on auto-sync).
+5. On another device: same origin/app URL or your own host of `examples/notes`, same adapter + passphrase → **Pull & merge** (or wait for auto-sync).
+
+Manual **Export vault** / **Import vault** works offline without a cloud adapter.
 
 ## Features
 

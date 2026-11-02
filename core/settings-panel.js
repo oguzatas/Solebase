@@ -68,13 +68,14 @@ export function initSettingsPanel(opts = {}) {
     drawer.setAttribute('aria-hidden', 'true');
   }
 
-  // Opening CTA + sidebar use data-open-settings; fall back to #btn-settings
-  const settingsTriggers = $$('[data-open-settings]');
-  if (settingsTriggers.length) {
-    settingsTriggers.forEach((el) => el.addEventListener('click', openSettings));
-  } else {
-    $('#btn-settings')?.addEventListener('click', openSettings);
-  }
+  // Delegate so gear works even when the app mounts after init
+  document.addEventListener('click', (e) => {
+    const trigger = e.target.closest?.('[data-open-settings], #btn-settings');
+    if (trigger) {
+      e.preventDefault();
+      openSettings();
+    }
+  });
   $('#btn-close-settings')?.addEventListener('click', closeSettings);
   backdrop?.addEventListener('click', closeSettings);
 
