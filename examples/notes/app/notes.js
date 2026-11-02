@@ -108,6 +108,8 @@ export async function mount(root) {
   const foldersCol = db.collection(FOLDERS);
   /** @type {string|null} */
   let activeId = null;
+  /** Note id currently shown in the editor. Saves must not run against a different id. */
+  let boundNoteId = null;
   let query = '';
   /** @type {'edit'|'preview'|'split'} */
   let viewMode = 'edit';
@@ -533,6 +535,7 @@ export async function mount(root) {
     tagsEl.value = (Array.isArray(note.tags) ? note.tags : []).join(', ');
     setBody(note.body || '');
     pinBtn.classList.toggle('is-on', !!note.pinned);
+    boundNoteId = note.id;
     applyViewMode();
     refreshSidePanels();
     hintEl.textContent = 'Saved';
@@ -549,7 +552,8 @@ export async function mount(root) {
   }
 
   async function persistActive() {
-    if (!activeId) return;
+    clearTimeout(saveTimer);
+    if (!activeId || boundNoteId !== activeId) return;
     const body = getBody();
     const explicit = String(tagsEl.value || '')
       .split(/[,#\s]+/)
@@ -597,6 +601,14 @@ export async function mount(root) {
       pinned: !!seed.pinned,
     });
     activeId = row.id;
+    clearTimeout(saveTimer);
+    showEditor(true);
+    titleEl.value = row.title || 'Untitled';
+    folderEl.value = row.folder || '';
+    tagsEl.value = (Array.isArray(row.tags) ? row.tags : []).join(', ');
+    setBody(row.body || '');
+    pinBtn.classList.toggle('is-on', !!row.pinned);
+    boundNoteId = row.id;
     return row;
   }
 
@@ -716,10 +728,11 @@ export async function mount(root) {
       return;
     }
     const editing =
-      document.activeElement === titleEl ||
-      document.activeElement === folderEl ||
-      document.activeElement === tagsEl ||
-      (cmView && cmView.hasFocus);
+      boundNoteId === activeId &&
+      (document.activeElement === titleEl ||
+        document.activeElement === folderEl ||
+        document.activeElement === tagsEl ||
+        (cmView && cmView.hasFocus));
     if (editing) {
       // Keep typed title; still refresh tree from cache (optimistic patches included)
       showEditor(true);
@@ -742,6 +755,8 @@ export async function mount(root) {
     menuTarget = null;
   }
 
+  let menuGuardUntil = 0;
+
   function showCtxMenu(x, y, target) {
     menuTarget = target;
     const renameBtn = ctxMenu.querySelector('[data-act="rename"]');
@@ -751,10 +766,12 @@ export async function mount(root) {
     renameBtn.textContent = target.kind === 'folder' ? 'Rename folder' : 'Rename';
     deleteBtn.textContent = target.kind === 'folder' ? 'Delete folder' : 'Delete';
 
+    if (ctxMenu.parentElement !== document.body) document.body.appendChild(ctxMenu);
     ctxMenu.hidden = false;
+    menuGuardUntil = Date.now() + 400;
     const rect = ctxMenu.getBoundingClientRect();
-    const left = Math.min(x, window.innerWidth - rect.width - 8);
-    const top = Math.min(y, window.innerHeight - rect.height - 8);
+    const left = Math.min(x, window.innerWidth - Math.max(rect.width, 180) - 8);
+    const top = Math.min(y, window.innerHeight - Math.max(rect.height, 160) - 8);
     ctxMenu.style.left = `${Math.max(8, left)}px`;
     ctxMenu.style.top = `${Math.max(8, top)}px`;
   }
@@ -944,19 +961,26 @@ export async function mount(root) {
     } else if (act === 'delete' && target.kind === 'folder') {
       await deleteFolder(target.path);
     } else if (act === 'new-note') {
-      if (activeId) await persistActive();
-      const folder = target.kind === 'folder' ? target.path : normalizeFolder(folderEl.value);
-      await createNote({ title: 'Untitled', folder, body: '' });
+      clearTimeout(saveTimer);
+      if (activeId && boundNoteId === activeId) await persistActive();
+      const folder = target.kind === 'folder' ? target.path : '';
+      await createNote({ title: 'Untitled', folder, body: '', tags: [] });
       setVaultOpen(true);
+      titleEl.focus();
+      titleEl.select();
     } else if (act === 'new-folder') {
       const base = target.kind === 'folder' ? `${target.path}/` : '';
       await createFolder(base);
     }
   });
 
-  document.addEventListener('click', (e) => {
-    if (!ctxMenu.hidden && !ctxMenu.contains(e.target)) hideCtxMenu();
-  });
+  function onPointerDown(e) {
+    if (ctxMenu.hidden) return;
+    if (Date.now() < menuGuardUntil) return;
+    if (ctxMenu.contains(e.target)) return;
+    hideCtxMenu();
+  }
+  document.addEventListener('pointerdown', onPointerDown, true);
 
   searchEl.addEventListener('input', () => {
     query = searchEl.value;
@@ -964,11 +988,14 @@ export async function mount(root) {
   });
 
   async function onNewNote() {
-    if (activeId) await persistActive();
+    clearTimeout(saveTimer);
+    if (activeId && boundNoteId === activeId) await persistActive();
+    const folder = normalizeFolder(folderEl.value);
     await createNote({
       title: 'Untitled',
-      folder: normalizeFolder(folderEl.value),
+      folder,
       body: '',
+      tags: [],
     });
     setVaultOpen(true);
     titleEl.focus();
@@ -1165,12 +1192,14 @@ export async function mount(root) {
       clearTimeout(saveTimer);
       window.removeEventListener('keydown', onGlobalKey);
       window.removeEventListener('resize', syncBackdrop);
+      document.removeEventListener('pointerdown', onPointerDown, true);
       if (unsubNotes) unsubNotes();
       if (unsubFolders) unsubFolders();
       if (cmView) {
         cmView.destroy();
         cmView = null;
       }
+      ctxMenu.remove();
       root.innerHTML = '';
     },
   };
