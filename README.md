@@ -15,7 +15,7 @@ No npm bundler. Pure ES modules, Tailwind CDN, IndexedDB, Web Crypto, installabl
 | **Sync** | Optional encrypted snapshot to Drive / WebDAV / S3 with a passphrase | Part of hosting. Configure it separately in Settings. |
 | **QR / Share** | Opens the **same origin** on another device | A native binary install. After open: configure sync **or** stay local-only on that device. |
 
-Ship guide (deploy, PWA install, tunnels): **[docs/SHIP.md](docs/SHIP.md)**. Settings → **Share** shows the current URL, Copy, and a QR code.
+Ship guide (GitHub Pages, free tiers, tunnels, why LAN install fails): **[docs/SHIP.md](docs/SHIP.md)**. Settings → **Share** shows the current URL, Copy, and a QR code. Push to `main` can auto-publish via GitHub Actions Pages (enable under repo Settings → Pages).
 
 ## Clone starter vs copy example
 
