@@ -1,5 +1,5 @@
 /**
- * app/notes.js — Obsidian-like personal vault (quiet utility)
+ * app/notes.js — Personal Markdown vault (editor-first)
  *
  * Collections only — never adapters or sync:
  *   import { db } from '../core/db-api.js';
@@ -22,6 +22,21 @@ import {
 } from './markdown.js';
 
 const NOTES = 'notes';
+
+const I = {
+  menu: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>`,
+  plus: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>`,
+  calendar: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>`,
+  search: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="11" cy="11" r="6.5"/><path d="M16.5 16.5 21 21"/></svg>`,
+  panel: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>`,
+  edit: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 20h4L18 10l-4-4L4 16v4z"/><path d="m14 6 4 4"/></svg>`,
+  split: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>`,
+  eye: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  star: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="m12 3 2.7 5.5 6 .9-4.4 4.3 1 6L12 16.8 6.7 19.7l1-6L3.4 9.4l6-.9L12 3z"/></svg>`,
+  trash: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M8 7l.6 12h6.8L16 7"/></svg>`,
+  gear: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`,
+  close: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`,
+};
 
 function todayTitle() {
   const d = new Date();
@@ -65,6 +80,24 @@ function fuzzyScore(query, text) {
   return score;
 }
 
+/** Parse search: `#tag`, `path:folder`, rest is free text. */
+function parseQuery(raw) {
+  const tokens = String(raw || '').trim().split(/\s+/).filter(Boolean);
+  const tags = [];
+  let path = '';
+  const text = [];
+  for (const tok of tokens) {
+    if (tok.startsWith('#') && tok.length > 1) {
+      tags.push(tok.slice(1).toLowerCase());
+    } else if (/^path:/i.test(tok)) {
+      path = normalizeFolder(tok.slice(5)).toLowerCase();
+    } else {
+      text.push(tok.toLowerCase());
+    }
+  }
+  return { tags, path, text: text.join(' ') };
+}
+
 /**
  * @param {HTMLElement} root
  */
@@ -73,122 +106,111 @@ export async function mount(root) {
   /** @type {string|null} */
   let activeId = null;
   let query = '';
-  let folderFilter = '';
-  let tagFilter = '';
   /** @type {'edit'|'preview'|'split'} */
-  let viewMode = 'split';
+  let viewMode = 'edit';
   let saveTimer = null;
   let unsub = null;
   /** @type {object[]} */
   let cache = [];
   let treeCollapsed = new Set();
-  let mobileShowList = true;
   /** @type {EditorView|null} */
   let cmView = null;
   let applyingDoc = false;
+  let vaultOpen = false;
+  let contextOpen = false;
 
   root.innerHTML = `
     <div class="vault" data-app="notes">
-      <aside class="vault-rail" id="vault-rail" aria-label="Vault">
-        <div class="vault-rail-head">
-          <div class="vault-actions">
-            <button type="button" class="btn btn-primary btn-sm" id="n-new" title="New note (Ctrl/Cmd+N)">New</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="n-daily" title="Today’s daily note">Daily</button>
-            <button type="button" class="btn btn-ghost btn-sm" id="n-switcher" title="Quick switcher (Ctrl/Cmd+P)">Find</button>
+      <header class="vault-bar" role="toolbar" aria-label="Notes">
+        <div class="vault-bar-left">
+          <button type="button" class="icon-btn" id="n-toggle-vault" aria-label="Notes list" title="Notes list" aria-expanded="false">${I.menu}</button>
+          <button type="button" class="icon-btn" id="n-new" aria-label="New note" title="New note (Ctrl/Cmd+N)">${I.plus}</button>
+          <button type="button" class="icon-btn" id="n-daily" aria-label="Daily note" title="Today’s note">${I.calendar}</button>
+          <button type="button" class="icon-btn" id="n-switcher" aria-label="Quick switcher" title="Quick switcher (Ctrl/Cmd+P)">${I.search}</button>
+        </div>
+        <div class="vault-bar-center">
+          <input type="text" id="n-title" class="title-input" placeholder="Untitled" maxlength="160" />
+        </div>
+        <div class="vault-bar-right">
+          <div class="view-toggle" role="group" aria-label="Editor view">
+            <button type="button" class="icon-btn view-btn" data-view="edit" aria-label="Edit" title="Edit">${I.edit}</button>
+            <button type="button" class="icon-btn view-btn" data-view="split" aria-label="Split" title="Split">${I.split}</button>
+            <button type="button" class="icon-btn view-btn" data-view="preview" aria-label="Preview" title="Preview">${I.eye}</button>
           </div>
-          <input type="search" id="n-search" placeholder="Search vault…" autocomplete="off" />
+          <button type="button" class="icon-btn" id="n-pin" aria-label="Pin note" title="Pin">${I.star}</button>
+          <button type="button" class="icon-btn" id="n-delete" aria-label="Delete note" title="Delete">${I.trash}</button>
+          <button type="button" class="icon-btn" id="n-toggle-context" aria-label="Outline and links" title="Outline &amp; links" aria-expanded="false">${I.panel}</button>
+          <button type="button" class="icon-btn" id="n-settings" data-open-settings aria-label="Settings" title="Settings">${I.gear}</button>
         </div>
-        <div class="vault-filters">
-          <label>
-            <span>Folder</span>
-            <select id="n-folder-filter">
-              <option value="">All</option>
-            </select>
-          </label>
-          <label>
-            <span>Tag</span>
-            <select id="n-tag-filter">
-              <option value="">All</option>
-            </select>
-          </label>
-        </div>
-        <div class="vault-tree" id="n-tree" role="tree"></div>
-      </aside>
+      </header>
 
-      <section class="vault-editor" id="n-editor" aria-label="Editor">
-        <div class="vault-empty" id="n-empty">
-          <p class="vault-empty-title">Vault</p>
-          <p class="vault-empty-copy">Create a note, open today’s daily, or press <kbd>Ctrl</kbd>+<kbd>P</kbd> to jump.</p>
-        </div>
-        <div class="vault-form hidden" id="n-form">
-          <div class="vault-form-top">
-            <button type="button" class="btn btn-ghost btn-sm vault-mobile-back" id="n-back-list" aria-label="Back to list">Notes</button>
-            <input type="text" id="n-title" placeholder="Note title" maxlength="160" />
-            <div class="vault-form-actions">
-              <div class="view-toggle" role="group" aria-label="Editor view">
-                <button type="button" class="btn btn-ghost btn-sm view-btn" data-view="edit">Edit</button>
-                <button type="button" class="btn btn-ghost btn-sm view-btn" data-view="split">Split</button>
-                <button type="button" class="btn btn-ghost btn-sm view-btn" data-view="preview">Preview</button>
+      <div class="vault-meta" id="n-meta">
+        <input type="text" id="n-folder" placeholder="path/folder" maxlength="120" list="n-folder-list" />
+        <datalist id="n-folder-list"></datalist>
+        <input type="text" id="n-tags" placeholder="tags" maxlength="160" />
+        <span class="vault-save-hint" id="n-hint">Ready</span>
+      </div>
+
+      <div class="vault-stage">
+        <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+
+        <aside class="vault-drawer" id="vault-drawer" aria-label="Vault" aria-hidden="true">
+          <div class="drawer-head">
+            <span class="drawer-label">Notes</span>
+            <button type="button" class="icon-btn" id="n-close-vault" aria-label="Close list">${I.close}</button>
+          </div>
+          <div class="drawer-search">
+            <input type="search" id="n-search" placeholder="Search · #tag · path:folder" autocomplete="off" />
+          </div>
+          <div class="vault-tree" id="n-tree" role="tree"></div>
+        </aside>
+
+        <section class="vault-editor" id="n-editor" aria-label="Editor">
+          <div class="vault-empty" id="n-empty">
+            <p class="vault-empty-title">No note open</p>
+            <p class="vault-empty-copy">Press <kbd>+</kbd> or <kbd>Ctrl</kbd>+<kbd>N</kbd>. Daily note from the calendar icon. Jump with <kbd>Ctrl</kbd>+<kbd>P</kbd>.</p>
+          </div>
+          <div class="vault-form hidden" id="n-form">
+            <div class="vault-panes" id="n-panes" data-mode="edit">
+              <div class="vault-cm-wrap" id="n-cm-wrap">
+                <div id="n-cm" class="vault-cm"></div>
               </div>
-              <button type="button" class="btn-icon" id="n-pin" aria-label="Pin note" title="Pin">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 1.5l1.2 3.6H13l-3 2.4.9 3.5L8 9.2l-2.9 1.8.9-3.5-3-2.4h3.8L8 1.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
-              </button>
-              <button type="button" class="btn-icon" id="n-delete" aria-label="Delete note" title="Delete">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                  <path d="M3 4h10M6 4V3h4v1M5 4l.5 9h5L11 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-                </svg>
-              </button>
+              <div class="vault-preview" id="n-preview" aria-live="polite"></div>
             </div>
           </div>
-          <div class="vault-meta-row">
-            <label>
-              <span>Path / folder</span>
-              <input type="text" id="n-folder" placeholder="journal / projects/alpha" maxlength="120" list="n-folder-list" />
-              <datalist id="n-folder-list"></datalist>
-            </label>
-            <label>
-              <span>Tags</span>
-              <input type="text" id="n-tags" placeholder="ideas, reading — or use #tags / frontmatter" maxlength="160" />
-            </label>
-          </div>
-          <div class="vault-panes" id="n-panes" data-mode="split">
-            <div class="vault-cm-wrap" id="n-cm-wrap">
-              <div id="n-cm" class="vault-cm"></div>
-            </div>
-            <div class="vault-preview" id="n-preview" aria-live="polite"></div>
-          </div>
-          <p class="vault-save-hint" id="n-hint">Saved locally</p>
-        </div>
-      </section>
+        </section>
 
-      <aside class="vault-side" id="vault-side" aria-label="Note context">
-        <div class="side-block">
-          <h3 class="side-title">Outline</h3>
-          <ul class="side-list" id="n-outline"></ul>
-        </div>
-        <div class="side-block">
-          <h3 class="side-title">Backlinks</h3>
-          <ul class="side-list" id="n-backlinks"></ul>
-        </div>
-        <div class="side-block">
-          <h3 class="side-title">Outgoing</h3>
-          <ul class="side-list" id="n-outgoing"></ul>
-        </div>
-      </aside>
+        <aside class="context-drawer" id="context-drawer" aria-label="Note context" aria-hidden="true">
+          <div class="drawer-head">
+            <span class="drawer-label">Context</span>
+            <button type="button" class="icon-btn" id="n-close-context" aria-label="Close context">${I.close}</button>
+          </div>
+          <div class="side-block">
+            <h3 class="side-title">Outline</h3>
+            <ul class="side-list" id="n-outline"></ul>
+          </div>
+          <div class="side-block">
+            <h3 class="side-title">Backlinks</h3>
+            <ul class="side-list" id="n-backlinks"></ul>
+          </div>
+          <div class="side-block">
+            <h3 class="side-title">Outgoing</h3>
+            <ul class="side-list" id="n-outgoing"></ul>
+          </div>
+        </aside>
+      </div>
     </div>
 
     <div class="switcher-backdrop" id="switcher-backdrop" hidden></div>
     <div class="switcher" id="switcher" role="dialog" aria-modal="true" aria-label="Quick switcher" hidden>
       <input type="search" id="switcher-input" placeholder="Jump to note…" autocomplete="off" />
       <ul class="switcher-list" id="switcher-list"></ul>
-      <p class="switcher-hint">↑↓ navigate · Enter open · Esc close</p>
+      <p class="switcher-hint">↑↓ · Enter · Esc</p>
     </div>
   `;
 
   const treeEl = root.querySelector('#n-tree');
   const searchEl = root.querySelector('#n-search');
-  const folderFilterEl = root.querySelector('#n-folder-filter');
-  const tagFilterEl = root.querySelector('#n-tag-filter');
   const emptyEl = root.querySelector('#n-empty');
   const formEl = root.querySelector('#n-form');
   const titleEl = root.querySelector('#n-title');
@@ -204,10 +226,16 @@ export async function mount(root) {
   const outgoingEl = root.querySelector('#n-outgoing');
   const pinBtn = root.querySelector('#n-pin');
   const vaultEl = root.querySelector('.vault');
+  const vaultDrawer = root.querySelector('#vault-drawer');
+  const contextDrawer = root.querySelector('#context-drawer');
+  const drawerBackdrop = root.querySelector('#drawer-backdrop');
+  const toggleVaultBtn = root.querySelector('#n-toggle-vault');
+  const toggleContextBtn = root.querySelector('#n-toggle-context');
   const switcherEl = root.querySelector('#switcher');
   const switcherBackdrop = root.querySelector('#switcher-backdrop');
   const switcherInput = root.querySelector('#switcher-input');
   const switcherList = root.querySelector('#switcher-list');
+  const metaEl = root.querySelector('#n-meta');
 
   let switcherIndex = 0;
   /** @type {object[]} */
@@ -236,18 +264,25 @@ export async function mount(root) {
     if (focus) cmView.focus();
   }
 
+  function resolveTags(n) {
+    return collectTags(n.body || '', Array.isArray(n.tags) ? n.tags : []);
+  }
+
   function filtered() {
-    const q = query.trim().toLowerCase();
+    const { tags, path, text } = parseQuery(query);
     return cache
       .filter((n) => {
-        if (folderFilter && normalizeFolder(n.folder) !== folderFilter) return false;
-        if (tagFilter) {
-          const tags = resolveTags(n);
-          if (!tags.includes(tagFilter)) return false;
+        if (path) {
+          const folder = normalizeFolder(n.folder).toLowerCase();
+          if (!(folder === path || folder.startsWith(`${path}/`))) return false;
         }
-        if (!q) return true;
+        if (tags.length) {
+          const noteTags = resolveTags(n);
+          if (!tags.every((t) => noteTags.includes(t))) return false;
+        }
+        if (!text) return true;
         const hay = `${n.title || ''} ${n.body || ''} ${n.folder || ''} ${(n.tags || []).join(' ')}`.toLowerCase();
-        return hay.includes(q);
+        return hay.includes(text);
       })
       .sort((a, b) => {
         const ap = a.pinned ? 1 : 0;
@@ -257,36 +292,12 @@ export async function mount(root) {
       });
   }
 
-  function resolveTags(n) {
-    return collectTags(n.body || '', Array.isArray(n.tags) ? n.tags : []);
-  }
-
-  function allFolders() {
-    return [...new Set(cache.map((n) => normalizeFolder(n.folder)).filter(Boolean))].sort();
-  }
-
-  function allTags() {
-    return [...new Set(cache.flatMap((n) => resolveTags(n)))].sort();
-  }
-
-  function refreshFilterOptions() {
-    const folders = allFolders();
-    const tags = allTags();
-    const keepFolder = folderFilter;
-    const keepTag = tagFilter;
-    folderFilterEl.innerHTML =
-      `<option value="">All</option>` +
-      folders.map((f) => `<option value="${escapeHtml(f)}">${escapeHtml(f)}</option>`).join('');
-    tagFilterEl.innerHTML =
-      `<option value="">All</option>` +
-      tags.map((t) => `<option value="${escapeHtml(t)}">#${escapeHtml(t)}</option>`).join('');
-    folderFilterEl.value = keepFolder;
-    tagFilterEl.value = keepTag;
+  function refreshFolderList() {
+    const folders = [...new Set(cache.map((n) => normalizeFolder(n.folder)).filter(Boolean))].sort();
     folderListEl.innerHTML = folders.map((f) => `<option value="${escapeHtml(f)}"></option>`).join('');
   }
 
   function buildTree(rows) {
-    /** @type {Map<string, { name: string, path: string, children: Map<string, any>, notes: object[] }>} */
     const rootNode = { name: '', path: '', children: new Map(), notes: [] };
 
     function ensureFolder(path) {
@@ -305,9 +316,7 @@ export async function mount(root) {
     }
 
     for (const n of rows) {
-      const folder = normalizeFolder(n.folder);
-      const node = ensureFolder(folder);
-      node.notes.push(n);
+      ensureFolder(normalizeFolder(n.folder)).notes.push(n);
     }
     return rootNode;
   }
@@ -318,8 +327,8 @@ export async function mount(root) {
     for (const folder of folders) {
       const collapsed = treeCollapsed.has(folder.path);
       parts.push(`
-        <div class="tree-folder" style="--depth:${depth}">
-          <button type="button" class="tree-folder-btn" data-toggle-folder="${escapeHtml(folder.path)}" aria-expanded="${collapsed ? 'false' : 'true'}">
+        <div class="tree-folder">
+          <button type="button" class="tree-folder-btn" style="--depth:${depth}" data-toggle-folder="${escapeHtml(folder.path)}" aria-expanded="${collapsed ? 'false' : 'true'}">
             <span class="tree-chevron">${collapsed ? '▸' : '▾'}</span>
             <span class="tree-folder-name">${escapeHtml(folder.name)}</span>
           </button>
@@ -342,8 +351,7 @@ export async function mount(root) {
         const pin = n.pinned ? '<span class="tree-pin" title="Pinned">★</span>' : '';
         return `
           <button type="button" class="tree-note${active}" data-id="${n.id}" style="--depth:${depth}" role="treeitem">
-            ${pin}
-            <span class="tree-note-title">${escapeHtml(n.title || 'Untitled')}</span>
+            <span class="tree-note-title">${pin}${escapeHtml(n.title || 'Untitled')}</span>
             <span class="tree-note-snip">${escapeHtml(snippet(n.body))}</span>
           </button>`;
       })
@@ -353,16 +361,14 @@ export async function mount(root) {
 
   function renderTree() {
     const rows = filtered();
+    const parsed = parseQuery(query);
     if (!rows.length) {
       const emptyMsg =
-        cache.length === 0
-          ? 'No notes yet — New or Daily to start.'
-          : 'No notes match.';
+        cache.length === 0 ? 'Empty vault. Create a note.' : 'No matches.';
       treeEl.innerHTML = `<p class="tree-empty">${emptyMsg}</p>`;
       return;
     }
-    if (query.trim() || tagFilter) {
-      // Flat list when searching / tagging — clearer than a sparse tree
+    if (parsed.text || parsed.tags.length || parsed.path) {
       treeEl.innerHTML = rows
         .map((n) => {
           const active = n.id === activeId ? ' is-active' : '';
@@ -370,21 +376,21 @@ export async function mount(root) {
           const folder = normalizeFolder(n.folder);
           return `
             <button type="button" class="tree-note${active}" data-id="${n.id}" style="--depth:0" role="treeitem">
-              ${pin}
-              <span class="tree-note-title">${escapeHtml(n.title || 'Untitled')}</span>
-              <span class="tree-note-snip">${escapeHtml(folder ? folder + ' · ' : '')}${escapeHtml(snippet(n.body))}</span>
+              <span class="tree-note-title">${pin}${escapeHtml(n.title || 'Untitled')}</span>
+              <span class="tree-note-snip">${escapeHtml(folder ? `${folder} · ` : '')}${escapeHtml(snippet(n.body))}</span>
             </button>`;
         })
         .join('');
       return;
     }
-    const tree = buildTree(rows);
-    treeEl.innerHTML = renderTreeNode(tree);
+    treeEl.innerHTML = renderTreeNode(buildTree(rows));
   }
 
   function showEditor(show) {
     emptyEl.classList.toggle('hidden', show);
     formEl.classList.toggle('hidden', !show);
+    metaEl.classList.toggle('is-idle', !show);
+    titleEl.disabled = !show;
   }
 
   function applyViewMode() {
@@ -396,8 +402,7 @@ export async function mount(root) {
   }
 
   function refreshPreview() {
-    const body = getBody();
-    previewEl.innerHTML = renderMarkdown(body, { noteTitles: noteTitlesSet() });
+    previewEl.innerHTML = renderMarkdown(getBody(), { noteTitles: noteTitlesSet() });
   }
 
   function refreshSidePanels() {
@@ -445,10 +450,40 @@ export async function mount(root) {
       : '<li class="side-empty">No wiki-links</li>';
   }
 
+  function setVaultOpen(open) {
+    vaultOpen = open;
+    vaultEl.classList.toggle('vault-open', open);
+    vaultDrawer.setAttribute('aria-hidden', open ? 'false' : 'true');
+    toggleVaultBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    syncBackdrop();
+    if (open) {
+      requestAnimationFrame(() => searchEl.focus());
+    }
+  }
+
+  function setContextOpen(open) {
+    contextOpen = open;
+    vaultEl.classList.toggle('context-open', open);
+    contextDrawer.setAttribute('aria-hidden', open ? 'false' : 'true');
+    toggleContextBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    syncBackdrop();
+  }
+
+  function syncBackdrop() {
+    const any = vaultOpen || contextOpen;
+    drawerBackdrop.hidden = !any;
+  }
+
+  function closeDrawers() {
+    setVaultOpen(false);
+    setContextOpen(false);
+  }
+
   function loadActive() {
     const note = cache.find((n) => n.id === activeId);
     if (!note) {
       showEditor(false);
+      titleEl.value = '';
       refreshSidePanels();
       return;
     }
@@ -460,14 +495,7 @@ export async function mount(root) {
     pinBtn.classList.toggle('is-on', !!note.pinned);
     applyViewMode();
     refreshSidePanels();
-    hintEl.textContent = 'Saved locally';
-    mobileShowList = false;
-    updateMobileLayout();
-  }
-
-  function updateMobileLayout() {
-    vaultEl.classList.toggle('show-list', mobileShowList);
-    vaultEl.classList.toggle('show-editor', !mobileShowList);
+    hintEl.textContent = 'Saved';
   }
 
   function scheduleSave() {
@@ -496,7 +524,7 @@ export async function mount(root) {
       pinned: !!pinBtn.classList.contains('is-on'),
     };
     await notes.update(activeId, patch);
-    hintEl.textContent = 'Saved locally';
+    hintEl.textContent = 'Saved';
     refreshPreview();
     refreshSidePanels();
   }
@@ -510,8 +538,6 @@ export async function mount(root) {
       pinned: !!seed.pinned,
     });
     activeId = row.id;
-    viewMode = viewMode || 'split';
-    mobileShowList = false;
   }
 
   async function openOrCreateByTitle(title, { folder = '', body } = {}) {
@@ -521,6 +547,7 @@ export async function mount(root) {
       activeId = existing.id;
       renderTree();
       loadActive();
+      closeDrawers();
       return existing;
     }
     if (activeId) await persistActive();
@@ -530,12 +557,13 @@ export async function mount(root) {
       body: body ?? `# ${title}\n\n`,
       tags: [],
     });
+    closeDrawers();
     return null;
   }
 
   function paint(all) {
     cache = all;
-    refreshFilterOptions();
+    refreshFolderList();
     if (activeId && !cache.some((n) => n.id === activeId)) {
       activeId = null;
     }
@@ -543,10 +571,10 @@ export async function mount(root) {
       activeId = filtered()[0]?.id || cache[0].id;
     }
     renderTree();
-    // Avoid stomping in-progress edits when subscription fires after our own save
     const note = cache.find((n) => n.id === activeId);
     if (!note) {
       showEditor(false);
+      titleEl.value = '';
       refreshSidePanels();
       return;
     }
@@ -584,7 +612,7 @@ export async function mount(root) {
           basicSetup,
           markdown(),
           oneDark,
-          cmPlaceholder('Write in Markdown… [[wiki-links]], #tags, and - [ ] tasks'),
+          cmPlaceholder('Markdown… [[links]], #tags, - [ ] tasks'),
           saveKey,
           EditorView.lineWrapping,
           EditorView.updateListener.of((update) => {
@@ -606,7 +634,7 @@ export async function mount(root) {
               lineHeight: '1.55',
             },
             '.cm-content': {
-              padding: '0.75rem 0.85rem',
+              padding: '1rem 1.25rem',
               caretColor: '#a3bfb0',
             },
             '&.cm-focused': { outline: 'none' },
@@ -623,8 +651,8 @@ export async function mount(root) {
     });
   }
 
-  /* —— Quick switcher —— */
   function openSwitcher() {
+    closeDrawers();
     switcherEl.hidden = false;
     switcherBackdrop.hidden = false;
     switcherInput.value = '';
@@ -675,11 +703,29 @@ export async function mount(root) {
     loadActive();
   }
 
-  /* —— Events —— */
   initEditor();
   unsub = notes.subscribe(paint);
-  updateMobileLayout();
   applyViewMode();
+  showEditor(false);
+
+  toggleVaultBtn.addEventListener('click', () => {
+    if (vaultOpen) setVaultOpen(false);
+    else {
+      setContextOpen(false);
+      setVaultOpen(true);
+    }
+  });
+  root.querySelector('#n-close-vault').addEventListener('click', () => setVaultOpen(false));
+
+  toggleContextBtn.addEventListener('click', () => {
+    if (contextOpen) setContextOpen(false);
+    else {
+      setVaultOpen(false);
+      setContextOpen(true);
+    }
+  });
+  root.querySelector('#n-close-context').addEventListener('click', () => setContextOpen(false));
+  drawerBackdrop.addEventListener('click', closeDrawers);
 
   treeEl.addEventListener('click', async (e) => {
     const toggle = e.target.closest('[data-toggle-folder]');
@@ -696,6 +742,7 @@ export async function mount(root) {
     activeId = btn.getAttribute('data-id');
     renderTree();
     loadActive();
+    setVaultOpen(false);
   });
 
   searchEl.addEventListener('input', () => {
@@ -703,19 +750,10 @@ export async function mount(root) {
     renderTree();
   });
 
-  folderFilterEl.addEventListener('change', () => {
-    folderFilter = folderFilterEl.value;
-    renderTree();
-  });
-
-  tagFilterEl.addEventListener('change', () => {
-    tagFilter = tagFilterEl.value;
-    renderTree();
-  });
-
   root.querySelector('#n-new').addEventListener('click', async () => {
     if (activeId) await persistActive();
     await createNote({ title: 'Untitled', body: '' });
+    setVaultOpen(false);
   });
 
   root.querySelector('#n-daily').addEventListener('click', async () => {
@@ -724,12 +762,12 @@ export async function mount(root) {
     if (existing) {
       if (activeId) await persistActive();
       activeId = existing.id;
-      // Keep dailies under daily/
       if (normalizeFolder(existing.folder) !== 'daily') {
         await notes.update(existing.id, { folder: 'daily' });
       }
       renderTree();
       loadActive();
+      closeDrawers();
       return;
     }
     if (activeId) await persistActive();
@@ -739,13 +777,10 @@ export async function mount(root) {
       tags: ['daily'],
       body: `# ${title}\n\n## Notes\n\n- [ ] \n\n## Log\n\n`,
     });
+    closeDrawers();
   });
 
   root.querySelector('#n-switcher').addEventListener('click', openSwitcher);
-  root.querySelector('#n-back-list').addEventListener('click', () => {
-    mobileShowList = true;
-    updateMobileLayout();
-  });
 
   root.querySelector('#n-delete').addEventListener('click', async () => {
     if (!activeId) return;
@@ -758,6 +793,7 @@ export async function mount(root) {
   });
 
   pinBtn.addEventListener('click', () => {
+    if (!activeId) return;
     pinBtn.classList.toggle('is-on');
     scheduleSave();
   });
@@ -773,9 +809,6 @@ export async function mount(root) {
     el.addEventListener('input', scheduleSave);
   }
 
-  // Title rename is just updating the title field (wiki targets match by title)
-  titleEl.addEventListener('change', scheduleSave);
-
   previewEl.addEventListener('click', async (e) => {
     const a = e.target.closest('a[data-wiki], a[href^="#wiki:"]');
     if (!a) return;
@@ -787,10 +820,14 @@ export async function mount(root) {
     await openOrCreateByTitle(title);
   });
 
-  root.querySelector('#vault-side').addEventListener('click', async (e) => {
+  contextDrawer.addEventListener('click', async (e) => {
     const outline = e.target.closest('[data-outline]');
     if (outline) {
       const id = outline.getAttribute('data-outline');
+      if (viewMode === 'edit') {
+        viewMode = 'preview';
+        applyViewMode();
+      }
       const el = previewEl.querySelector(`#${CSS.escape(id)}`);
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       return;
@@ -806,6 +843,7 @@ export async function mount(root) {
       activeId = link.getAttribute('data-id');
       renderTree();
       loadActive();
+      setContextOpen(false);
     }
   });
 
@@ -843,13 +881,6 @@ export async function mount(root) {
 
   function onGlobalKey(e) {
     const mod = e.metaKey || e.ctrlKey;
-    const target = e.target;
-    const typing =
-      target &&
-      (target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.tagName === 'SELECT' ||
-        target.isContentEditable);
 
     if (e.key === 'Escape') {
       if (!switcherEl.hidden) {
@@ -857,6 +888,11 @@ export async function mount(root) {
         closeSwitcher();
         return;
       }
+      if (vaultOpen || contextOpen) {
+        e.preventDefault();
+        closeDrawers();
+      }
+      return;
     }
 
     if (mod && e.key.toLowerCase() === 's') {
@@ -874,9 +910,10 @@ export async function mount(root) {
       openSwitcher();
       return;
     }
-
-    // Don't steal keys while typing in unrelated fields except Mod combos above
-    void typing;
+    if (mod && e.key.toLowerCase() === 'o') {
+      e.preventDefault();
+      toggleVaultBtn.click();
+    }
   }
 
   window.addEventListener('keydown', onGlobalKey);

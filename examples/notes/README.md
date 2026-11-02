@@ -1,6 +1,6 @@
 # Notes (example)
 
-Obsidian-like personal vault on Prompt2UI — local-first Markdown PKM with optional E2EE cloud sync. Zero npm build; ES modules + CDN (`marked`, CodeMirror 6).
+Editor-first Markdown vault on Prompt2UI — local-first PKM with optional E2EE sync. Zero npm build; ES modules + CDN (`marked`, CodeMirror 6).
 
 ## Run
 
@@ -9,24 +9,23 @@ cd examples/notes
 python -m http.server 8082
 ```
 
-Open http://localhost:8082 — vault opens immediately.
+Open http://localhost:8082 — editor opens immediately (no app shell rail).
 
-Needs network once for CDN imports (CodeMirror, marked). Offline after the browser caches them.
+Needs network once for CDN imports (CodeMirror, marked).
 
 ## Features
 
 | Area | What you get |
 |------|----------------|
-| Editor | CodeMirror 6 + Markdown language; **Edit / Preview / Split** |
-| Markdown | Headings, lists, code fences, tables, blockquotes, task lists `- [ ]`, images by URL (via `marked` GFM) |
-| Wiki-links | `[[Note Title]]` — click to open or **create**; backlinks + outgoing panels |
-| Vault | Nested folder paths, `#tags` + frontmatter tags, full-text search, new / rename (title) / delete, pin ★ |
-| Daily note | One-click today’s note (`YYYY-MM-DD` under `daily/`) |
-| Shortcuts | `Ctrl/Cmd+S` save (also autosave), `Ctrl/Cmd+N` new, `Ctrl/Cmd+P` quick switcher, `Esc` close overlays |
-| Persistence | `db.collection('notes')` with `updatedAt` for sync |
-| Sync | Settings gear → WebDAV / S3 / Drive + passphrase (unchanged Prompt2UI `core/`) |
-
-Right pane: outline, backlinks, outgoing wiki-links. Sidebar collapses on mobile.
+| Layout | Full-bleed editor; vault list + context as drawers; gear for Settings |
+| Editor | CodeMirror 6 Markdown; Edit / Split / Preview (icons) |
+| Markdown | GFM: headings, lists, fences, tables, blockquotes, tasks, images by URL |
+| Wiki-links | `[[Note Title]]` — open or create; outline / backlinks / outgoing in context drawer |
+| Search | One field: text, `#tag`, `path:folder` (no filter dropdowns) |
+| Vault | Nested paths, pin, new / rename / delete |
+| Daily | Calendar icon → `YYYY-MM-DD` under `daily/` |
+| Shortcuts | `Ctrl/Cmd+S` save, `+N` new, `+P` switcher, `+O` vault drawer, `Esc` closes drawers |
+| Persistence | `db.collection('notes')` + `updatedAt`; Settings sync unchanged |
 
 ## Note shape
 
@@ -34,11 +33,9 @@ Right pane: outline, backlinks, outgoing wiki-links. Sidebar collapses on mobile
 { title, body, folder, tags: string[], pinned?: boolean }
 ```
 
-`updatedAt` / `id` are managed by PromptDB.
-
 ## Customize
 
-Edit `app/notes.js` and `app/markdown.js`. Refresh engines from the blank starter:
+Edit `app/notes.js` and `app/markdown.js`. Refresh engines:
 
 ```powershell
 ..\..\scripts\copy-core.ps1 -Target .

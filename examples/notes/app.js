@@ -1,7 +1,5 @@
 /**
- * app.js — Notes example shell
- *
- * Opens straight into the notes workspace. Settings for sync only.
+ * app.js — Notes shell (editor-first; settings drawer only)
  */
 
 import { mount as mountApp } from './app/notes.js';
@@ -20,7 +18,7 @@ function toast(message, type = 'info') {
   toast._t = setTimeout(() => toastEl.classList.remove('show'), 3200);
 }
 
-/** @type {{ unmount?: () => void, title?: string } | null} */
+/** @type {{ unmount?: () => void } | null} */
 let activeHandle = null;
 
 async function mountMainApp() {
@@ -36,19 +34,6 @@ async function mountMainApp() {
   void mainPane.offsetWidth;
   mainPane.classList.add('pane-enter');
   activeHandle = await mountApp(mainPane);
-  const title = activeHandle?.title || 'Notes';
-  const titleEl = $('#topbar-title');
-  if (titleEl) titleEl.textContent = title;
-}
-
-function wireChrome() {
-  $('#btn-menu')?.addEventListener('click', () => {
-    document.body.classList.toggle('sidebar-open');
-  });
-
-  $('#btn-expand-sidebar')?.addEventListener('click', () => {
-    document.body.classList.toggle('sidebar-expanded');
-  });
 }
 
 async function boot() {
@@ -58,8 +43,6 @@ async function boot() {
       mountMainApp().catch((err) => toast(err.message, 'err'));
     },
   });
-
-  wireChrome();
 
   const params = new URLSearchParams(location.search);
   if (params.get('code') && params.get('scope')?.includes('drive')) {
