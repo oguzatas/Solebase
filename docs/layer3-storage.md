@@ -1,6 +1,6 @@
 # Layer 3 — Storage (OPFS + cr-sqlite)
 
-Local relational storage for Prompt2UI. This layer is **new**; the notes/calorie examples still use the legacy IndexedDB `PromptDB` path until a later migration.
+Local relational storage for **Solebase** (formerly Prompt2UI). This layer is **new**; the notes/calorie examples still use the legacy IndexedDB `PromptDB` path until a later migration. App code should prefer [Layer 1](solebase-layer1.md) (`Solebase.collection`) instead of talking to this worker directly.
 
 ## Rules
 
@@ -70,7 +70,7 @@ await client.insert('INSERT INTO notes (body) VALUES (?)', ['hello']);
 const rows = await client.select('SELECT * FROM notes');
 ```
 
-Layer 1 facades (`useCollection`, etc.) should wrap this client later — app code must not talk to the worker or OPFS directly.
+Layer 1 (`Solebase` / `collection`) wraps this worker — see [`solebase-layer1.md`](solebase-layer1.md). App code must not talk to the worker or OPFS directly.
 
 ## Yjs documents
 

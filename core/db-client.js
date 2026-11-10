@@ -8,8 +8,9 @@
  *   await client.insert('INSERT INTO t (name) VALUES (?)', ['Ada']);
  *   const rows = await client.select('SELECT * FROM t');
  *
- * Layer 1 callers should use this client (or a future useCollection facade) —
- * never Worker / postMessage / OPFS / cr-sqlite directly.
+ * Prefer Solebase Layer 1 (`packages/solebase`) for app code.
+ * This client remains for Layer 3 / Yjs / changeset tooling —
+ * never open OPFS / cr-sqlite on the main thread.
  */
 
 import { DEFAULT_DB_FILENAME } from './db-protocol.js';

@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Solebase — Layer 1 smoke</title>
+  <style>
+    :root {
+      --bg: #0c0e11;
+      --panel: #161a20;
+      --text: #e6e9ee;
+      --muted: #6b7380;
+      --ok: #7a9e8a;
+      --err: #c47878;
+      --border: #2a323d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Figtree, ui-sans-serif, system-ui, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1a2420, var(--bg));
+      color: var(--text);
+      padding: 2rem 1.25rem 3rem;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.35rem; }
+    p { color: var(--muted); margin: 0 0 1.25rem; line-height: 1.45; max-width: 42rem; }
+    button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      padding: 0.55rem 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover { border-color: var(--ok); }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    pre {
+      margin-top: 1.25rem;
+      padding: 1rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      min-height: 8rem;
+      font-size: 0.85rem;
+    }
+    .ok { color: var(--ok); }
+    .err { color: var(--err); }
+    code { color: var(--ok); }
+  </style>
+</head>
+<body>
+  <h1>Solebase Layer 1 — Developer API smoke</h1>
+  <p>
+    Proves <code>Solebase.init</code> → insert → subscribe → update → find
+    against the Layer 3 OPFS cr-sqlite worker. Requires localhost/https + OPFS.
+  </p>
+  <button id="run" type="button">Run smoke</button>
+  <pre id="out">Ready.</pre>
+
+  <script type="module">
+    import { Solebase } from '../../packages/solebase/dist/index.js';
+
+    const out = document.getElementById('out');
+    const btn = document.getElementById('run');
+
+    function log(line, cls) {
+      const span = document.createElement('span');
+      if (cls) span.className = cls;
+      span.textContent = line + '\n';
+      out.appendChild(span);
+    }
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      out.textContent = '';
+      /** @type {import('../../packages/solebase/dist/index.js').Solebase | null} */
+      let db = null;
+      try {
+        if (!window.isSecureContext) {
+          throw new Error('Not a secure context — use localhost or https');
+        }
+        if (!navigator.storage?.getDirectory) {
+          throw new Error('OPFS not available in this browser');
+        }
+
+        const workerUrl = new URL('../../core/db-worker.js', import.meta.url);
+        log('init…');
+        db = await Solebase.init({
+          appId: 'smokeLayer1',
+          encryptionKey: 'smoke-test-key-not-for-prod',
+          workerUrl,
+          sync: { provider: 's3', options: { stub: true } },
+        });
+        log('status=' + db.status, 'ok');
+        log('sync stub=' + JSON.stringify(db.getSyncConfig()), 'ok');
+
+        const notes = db.collection('notes');
+
+        /** @type {unknown[]} */
+        const snapshots = [];
+        const unsub = notes.subscribe((docs) => {
+          snapshots.push(docs);
+          log('subscribe emit → ' + JSON.stringify(docs), 'ok');
+        });
+
+        // Allow the immediate subscribe fetch to land.
+        await new Promise((r) => setTimeout(r, 200));
+
+        const inserted = await notes.insert({ title: 'hello', body: 'world' });
+        log('insert → ' + JSON.stringify(inserted), 'ok');
+        if (!inserted?.id) throw new Error('insert missing id');
+
+        // Wait for NOTIFY-driven subscribe refresh.
+        await new Promise((r) => setTimeout(r, 300));
+
+        const updated = await notes.update(inserted.id, { title: 'hello-updated' });
+        log('update → ' + JSON.stringify(updated), 'ok');
+        if (updated.title !== 'hello-updated') throw new Error('update did not stick');
+
+        await new Promise((r) => setTimeout(r, 300));
+
+        const found = await notes.findById(inserted.id);
+        log('findById → ' + JSON.stringify(found), 'ok');
+        if (!found || found.title !== 'hello-updated') {
+          throw new Error('findById mismatch');
+        }
+
+        const filtered = await notes.find({ title: 'hello-updated' });
+        log('find(filter) → ' + JSON.stringify(filtered), 'ok');
+        if (!filtered.length) throw new Error('find filter empty');
+
+        unsub();
+
+        if (snapshots.length < 2) {
+          throw new Error('expected subscribe to emit at least twice (initial + mutation)');
+        }
+
+        // Optional: sync-crypto wire check
+        const pkg = await db.encryptForSync({ hello: true });
+        if (!pkg || !pkg.ciphertext) throw new Error('encryptForSync failed');
+        log('encryptForSync ok', 'ok');
+
+        log('SMOKE_SOLEBASE_OK', 'ok');
+      } catch (err) {
+        console.error(err);
+        log('FAIL: ' + (err?.message || String(err)), 'err');
+      } finally {
+        try { await db?.close(); } catch { /* ignore */ }
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

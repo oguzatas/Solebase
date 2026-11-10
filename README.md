@@ -1,12 +1,16 @@
-# Prompt2UI
+# Solebase
+
+> **Rename note:** This product is **Solebase**. The GitHub/disk folder may still be named `prompt2ui` during migration.
 
 **Cloneable · Zero-build · Local-first · E2EE** starter for personal hobby apps.
 
 One folder = one personal app. The **root** is a blank canvas. **examples/** are use-ready apps you can copy or serve alone.
 
-No npm bundler. Pure ES modules, Tailwind CDN, Web Crypto, installable PWA.
+No npm bundler for apps. Pure ES modules, Tailwind CDN, Web Crypto, installable PWA. The Layer 1 library is TypeScript under `packages/solebase/` (compile with `npx tsc`; browsers import `packages/solebase/dist/`).
 
-**Layer 3 (storage, in progress):** OPFS-backed **cr-sqlite** in a Web Worker — see [`docs/layer3-storage.md`](docs/layer3-storage.md) (`examples/smoke-db/`), Yjs persistence in [`docs/yjs-provider.md`](docs/yjs-provider.md) (`examples/smoke-yjs/`), and changeset extract + E2EE in [`docs/sync-changesets.md`](docs/sync-changesets.md) (`examples/smoke-sync-changesets/`). Example apps still use legacy IndexedDB until migration.
+**Layer 1 (Developer API):** `Solebase.init` / `collection()` — see [`docs/solebase-layer1.md`](docs/solebase-layer1.md) (`examples/smoke-solebase/`).
+
+**Layer 3 (storage):** OPFS-backed **cr-sqlite** in a Web Worker — see [`docs/layer3-storage.md`](docs/layer3-storage.md) (`examples/smoke-db/`), Yjs persistence in [`docs/yjs-provider.md`](docs/yjs-provider.md) (`examples/smoke-yjs/`), and changeset extract + E2EE in [`docs/sync-changesets.md`](docs/sync-changesets.md) (`examples/smoke-sync-changesets/`). Example apps still use legacy IndexedDB until migration.
 
 ## Host vs sync vs offline (product truth)
 
@@ -38,7 +42,7 @@ Each example embeds its own `core/` copy so it runs with `python -m http.server`
 ### Blank starter (root)
 
 ```bash
-cd prompt2ui
+cd prompt2ui   # repo folder; product name is Solebase
 python -m http.server 8080
 ```
 
@@ -63,16 +67,18 @@ Use `localhost`, not `file://`.
 ## One-app-per-folder model
 
 ```
-prompt2ui/                      # BLANK STARTER — clone this for a new app
-  core/                         # engines (do not reinvent in UI)
+prompt2ui/                      # BLANK STARTER (product: Solebase)
+  packages/solebase/            # Layer 1 TypeScript API → dist/ ESM
+  core/                         # Layer 3 engines (worker, crypto, sync)
   app/blank.js                  # replace with your app
   index.html, app.js, sw.js …
 examples/
-  calorie-tracker/              # self-contained (own core/)
-  notes/                        # self-contained (own core/)
+  smoke-solebase/               # Layer 1 smoke
+  calorie-tracker/              # self-contained (own core/) — legacy IDB
+  notes/                        # self-contained (own core/) — legacy IDB
 ```
 
-AI (or you) edits `app/` only. Persistence, encryption, and cloud sync live in `core/` and stay invisible to UI code.
+AI (or you) edits `app/` only. New apps should use **Solebase** Layer 1; persistence stays in the worker.
 
 ## Design (quiet utility)
 
@@ -80,15 +86,22 @@ Dark charcoal base, soft sage accent, Bricolage Grotesque + Figtree. Dense calm 
 
 ## App API (never call adapters)
 
-```js
-import { db } from '../core/db-api.js';
+**Preferred (Solebase Layer 1 — OPFS / cr-sqlite):**
 
-await db.collection('meals').add({ name, calories });
+```js
+import { Solebase } from '../packages/solebase/dist/index.js';
+
+const db = await Solebase.init({
+  appId: 'meals',
+  encryptionKey: '…',
+  workerUrl: new URL('../core/db-worker.js', import.meta.url),
+});
+await db.collection('meals').insert({ name, calories });
 db.collection('meals').subscribe((rows) => render(rows));
-await db.collection('meals').remove(id);
+await db.collection('meals').delete(id);
 ```
 
-Records get `id` + `updatedAt` automatically. Deletes are soft (tombstones) so sync can merge across devices.
+**Legacy examples** still use IndexedDB via `core/db-api.js` (`add` / `remove` + soft tombstones) until migration.
 
 ## Sync pipeline
 
@@ -135,7 +148,9 @@ node --check core/db-protocol.js
 node scripts/smoke-local.mjs
 ```
 
-Layer 3 OPFS/cr-sqlite (browser, secure context): serve the repo → open [`examples/smoke-db/`](examples/smoke-db/) → **Run smoke**, or `node scripts/smoke-db-worker.mjs` against a localhost static server. Details: [`docs/layer3-storage.md`](docs/layer3-storage.md).
+Layer 1 Solebase API: [`examples/smoke-solebase/`](examples/smoke-solebase/) or `node scripts/smoke-solebase.mjs` — details [`docs/solebase-layer1.md`](docs/solebase-layer1.md).
+
+Layer 3 OPFS/cr-sqlite: [`examples/smoke-db/`](examples/smoke-db/) or `node scripts/smoke-db-worker.mjs` — [`docs/layer3-storage.md`](docs/layer3-storage.md).
 
 ## License
 
