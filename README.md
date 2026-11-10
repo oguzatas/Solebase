@@ -4,7 +4,9 @@
 
 One folder = one personal app. The **root** is a blank canvas. **examples/** are use-ready apps you can copy or serve alone.
 
-No npm bundler. Pure ES modules, Tailwind CDN, IndexedDB, Web Crypto, installable PWA.
+No npm bundler. Pure ES modules, Tailwind CDN, Web Crypto, installable PWA.
+
+**Layer 3 (storage, in progress):** OPFS-backed **cr-sqlite** in a Web Worker — see [`docs/layer3-storage.md`](docs/layer3-storage.md) and the smoke page at `examples/smoke-db/`. Example apps still use legacy IndexedDB until migration.
 
 ## Host vs sync vs offline (product truth)
 
@@ -127,8 +129,13 @@ node --check app.js
 node --check app/blank.js
 node --check examples/calorie-tracker/app/calorie-tracker.js
 node --check examples/notes/app/notes.js
+node --check core/db-client.js
+node --check core/db-worker.js
+node --check core/db-protocol.js
 node scripts/smoke-local.mjs
 ```
+
+Layer 3 OPFS/cr-sqlite (browser, secure context): serve the repo → open [`examples/smoke-db/`](examples/smoke-db/) → **Run smoke**, or `node scripts/smoke-db-worker.mjs` against a localhost static server. Details: [`docs/layer3-storage.md`](docs/layer3-storage.md).
 
 ## License
 

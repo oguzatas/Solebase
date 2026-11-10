@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prompt2UI — Layer 3 DB smoke</title>
+  <style>
+    :root {
+      --bg: #0c0e11;
+      --panel: #161a20;
+      --text: #e6e9ee;
+      --muted: #6b7380;
+      --ok: #7a9e8a;
+      --err: #c47878;
+      --border: #2a323d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Figtree, ui-sans-serif, system-ui, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1a2420, var(--bg));
+      color: var(--text);
+      padding: 2rem 1.25rem 3rem;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.35rem; }
+    p { color: var(--muted); margin: 0 0 1.25rem; line-height: 1.45; max-width: 42rem; }
+    button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      padding: 0.55rem 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover { border-color: var(--ok); }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    pre {
+      margin-top: 1.25rem;
+      padding: 1rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      min-height: 8rem;
+      font-size: 0.85rem;
+    }
+    .ok { color: var(--ok); }
+    .err { color: var(--err); }
+    code { color: var(--ok); }
+  </style>
+</head>
+<body>
+  <h1>Layer 3 — OPFS cr-sqlite smoke</h1>
+  <p>
+    Requires a <strong>secure context</strong> (<code>https://</code> or <code>http://localhost</code>)
+    and browser OPFS (<code>navigator.storage.getDirectory</code>).
+    Opens a module worker, creates a table, INSERT → SELECT → UPDATE → SELECT.
+  </p>
+  <button id="run" type="button">Run smoke</button>
+  <pre id="out">Ready.</pre>
+
+  <script type="module">
+    import { createDbClient } from '../../core/db-client.js';
+
+    const out = document.getElementById('out');
+    const btn = document.getElementById('run');
+
+    function log(line, cls) {
+      const span = document.createElement('span');
+      if (cls) span.className = cls;
+      span.textContent = line + '\n';
+      out.appendChild(span);
+    }
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      out.textContent = '';
+      let client;
+      try {
+        if (!window.isSecureContext) {
+          throw new Error('Not a secure context — use localhost or https');
+        }
+        if (!navigator.storage?.getDirectory) {
+          throw new Error('OPFS not available in this browser');
+        }
+
+        const workerUrl = new URL('../../core/db-worker.js', import.meta.url);
+        client = createDbClient({
+          workerUrl,
+          filename: 'prompt2ui-smoke.db',
+        });
+
+        log('init…');
+        const info = await client.init();
+        log(JSON.stringify(info), 'ok');
+
+        await client.exec(`
+          CREATE TABLE IF NOT EXISTS smoke_items (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            qty INTEGER NOT NULL DEFAULT 0
+          )
+        `);
+        log('CREATE TABLE ok', 'ok');
+
+        await client.insert(
+          'INSERT INTO smoke_items (name, qty) VALUES (?, ?)',
+          ['widget', 1],
+        );
+        log('INSERT ok', 'ok');
+
+        let rows = await client.select('SELECT id, name, qty FROM smoke_items ORDER BY id');
+        log('SELECT → ' + JSON.stringify(rows), 'ok');
+        if (!rows.length) throw new Error('expected at least one row after INSERT');
+
+        const id = rows[rows.length - 1].id;
+        await client.update(
+          'UPDATE smoke_items SET qty = ? WHERE id = ?',
+          [42, id],
+        );
+        log('UPDATE ok', 'ok');
+
+        rows = await client.select(
+          'SELECT id, name, qty FROM smoke_items WHERE id = ?',
+          [id],
+        );
+        log('SELECT after UPDATE → ' + JSON.stringify(rows), 'ok');
+        if (rows[0]?.qty !== 42) throw new Error('UPDATE did not stick');
+
+        log('SMOKE_DB_OK', 'ok');
+      } catch (err) {
+        console.error(err);
+        log('FAIL: ' + (err?.message || String(err)), 'err');
+      } finally {
+        try { client?.terminate(); } catch { /* ignore */ }
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
