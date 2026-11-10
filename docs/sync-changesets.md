@@ -1,6 +1,6 @@
 # Sync changesets + E2EE crypto
 
-Extract cr-sqlite change rows and encrypt them in the browser for later store-and-forward (S3 / Drive). **No** WebRTC or cloud adapters in this layer yet.
+Extract cr-sqlite change rows and encrypt them in the browser for store-and-forward (S3 / Drive) and P2P. Transport (upload / WebRTC / merge) lives in [`sync-transport.md`](sync-transport.md).
 
 ## Files
 
@@ -37,7 +37,7 @@ Optional `excludeSiteIdB64` skips a peer’s own site (reduces echo on live sync
 }
 ```
 
-Binary `val` / `site_id` values are wire-safe (`site_id` as base64; binary `val` as `{ $b64 }`).
+Binary `pk` / `val` / `site_id` values are wire-safe (`site_id` as base64; binary `pk`/`val` as `{ $b64 }`).
 
 ## Apply
 
@@ -55,7 +55,7 @@ const blob = packCiphertextPackage(pkg); // Uint8Array for future S3/Drive
 
 - PBKDF2 (210k, SHA-256) → AES-256-GCM when given a passphrase (same iteration count as legacy `prompt-crypto.js`).
 - Wrong passphrase → clear error; no plaintext logging.
-- Out of scope here: uploading `blob` to S3/Drive or exchanging it over WebRTC.
+- Upload / WebRTC / worker merge: see [`sync-transport.md`](sync-transport.md).
 
 ## Smoke
 

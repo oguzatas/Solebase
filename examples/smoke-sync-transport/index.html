@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Solebase — Sync transport smoke (P2P + S3)</title>
+  <style>
+    :root {
+      --bg: #0c0e11;
+      --panel: #161a20;
+      --text: #e6e9ee;
+      --muted: #6b7380;
+      --ok: #7a9e8a;
+      --err: #c47878;
+      --border: #2a323d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Figtree, ui-sans-serif, system-ui, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1a2420, var(--bg));
+      color: var(--text);
+      padding: 2rem 1.25rem 3rem;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.35rem; }
+    p { color: var(--muted); margin: 0 0 1.25rem; line-height: 1.45; max-width: 44rem; }
+    button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      padding: 0.55rem 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover { border-color: var(--ok); }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    pre {
+      margin-top: 1.25rem;
+      padding: 1rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      min-height: 8rem;
+      font-size: 0.85rem;
+    }
+    .ok { color: var(--ok); }
+    .err { color: var(--err); }
+    code { color: var(--ok); }
+  </style>
+</head>
+<body>
+  <h1>Solebase sync transport smoke</h1>
+  <p>
+    Proves local mutate → encrypt → S3-shaped memory blob (and WebRTC P2P) →
+    decrypt → worker <code>changeset_apply</code> → <code>collection.subscribe</code>.
+  </p>
+  <button id="run" type="button">Run smoke</button>
+  <pre id="out">Ready.</pre>
+
+  <script type="module">
+    import { Solebase } from '../../packages/solebase/dist/index.js';
+    import { MemoryBlobStore } from '../../core/sync-blob-store.js';
+    import { SolebaseP2PSession } from '../../core/sync-p2p.js';
+    import {
+      packCiphertextPackage,
+      decryptChangeset,
+    } from '../../core/sync-crypto.js';
+
+    const out = document.getElementById('out');
+    const btn = document.getElementById('run');
+
+    function log(line, cls) {
+      const span = cls ? `<span class="${cls}">${line}</span>` : line;
+      out.innerHTML += span + '\n';
+    }
+
+    function assert(cond, msg) {
+      if (!cond) throw new Error(msg);
+    }
+
+    async function waitFor(predicate, label, timeoutMs = 20_000) {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (await predicate()) return;
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      throw new Error(`timeout waiting for ${label}`);
+    }
+
+    async function run() {
+      out.textContent = '';
+      btn.disabled = true;
+      /** @type {Solebase[]} */
+      const opened = [];
+      try {
+        const sharedBlobs = new MemoryBlobStore();
+        const key = 'smoke-sync-transport-key';
+        const runId = crypto.randomUUID().slice(0, 8);
+        const workerUrl = new URL('../../core/db-worker.js', import.meta.url);
+
+        // ── 1) S3-shaped memory blob path (two devices, one origin) ──
+        log('1) S3/memory blob: two Solebase devices…');
+        const deviceA = await Solebase.init({
+          appId: 'syncSmoke',
+          filename: `solebase-sync-smoke-a-${runId}.db`,
+          encryptionKey: key,
+          workerUrl,
+          sync: {
+            provider: 's3',
+            options: {
+              memory: true,
+              blobStore: sharedBlobs,
+              autoSync: false,
+              prefix: 'solebase-changesets',
+            },
+          },
+        });
+        opened.push(deviceA);
+
+        const deviceB = await Solebase.init({
+          appId: 'syncSmoke',
+          filename: `solebase-sync-smoke-b-${runId}.db`,
+          encryptionKey: key,
+          workerUrl,
+          sync: {
+            provider: 's3',
+            options: {
+              memory: true,
+              blobStore: sharedBlobs,
+              autoSync: false,
+              prefix: 'solebase-changesets',
+            },
+          },
+        });
+        opened.push(deviceB);
+
+        const notesA = deviceA.collection('notes');
+        const notesB = deviceB.collection('notes');
+
+        /** @type {unknown[]|null} */
+        let remoteDocs = null;
+        const unsubB = notesB.subscribe((docs) => {
+          remoteDocs = docs;
+        });
+
+        // Ensure B's CRR table exists before merge.
+        await notesB.find();
+
+        const inserted = await notesA.insert({
+          title: 'blob-sync',
+          body: 'hello from A',
+        });
+        log(`   A inserted ${inserted.id}`);
+
+        const changeProbe = await deviceA.bridge.query(
+          `SELECT COUNT(*) AS n FROM crsql_changes`,
+        );
+        assert(
+          Number(changeProbe[0]?.n) > 0,
+          `expected crsql_changes after insert, got ${JSON.stringify(changeProbe)}`,
+        );
+        log(`   crsql_changes rows: ${changeProbe[0].n}`);
+
+        const pushResult = await deviceA.syncNow('smoke-push');
+        assert(pushResult.ok, `A push failed: ${JSON.stringify(pushResult)}`);
+        assert(pushResult.pushed?.uploaded >= 1, 'expected A to upload ≥1 blob');
+        log(`   A uploaded blob (cursor ${pushResult.pushed.cursor})`);
+
+        const listed = await sharedBlobs.list('solebase-changesets/syncSmoke/');
+        assert(listed.length >= 1, 'shared blob store empty after push');
+        log(`   shared store keys: ${listed.length}`);
+
+        let pullResult;
+        try {
+          pullResult = await deviceB.getSync().pullRemote();
+        } catch (err) {
+          throw new Error(
+            `B pullRemote threw: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+        log(`   pullResult: ${JSON.stringify(pullResult)}`);
+        assert(pullResult.applied >= 1, 'expected B to apply ≥1 change row');
+        log(`   B applied ${pullResult.applied} change row(s)`);
+
+        await waitFor(async () => {
+          const docs = await notesB.find();
+          return docs.some((d) => d.id === inserted.id && d.title === 'blob-sync');
+        }, 'B to see merged note');
+
+        assert(
+          Array.isArray(remoteDocs) && remoteDocs.some((d) => d.id === inserted.id),
+          'notesB.subscribe did not observe remote merge',
+        );
+        log('   subscribe saw remote merge ✓', 'ok');
+        unsubB();
+
+        // Drive provider stub shares the same interface.
+        const driveBlobs = new MemoryBlobStore();
+        const driveDb = await Solebase.init({
+          appId: 'syncSmokeDrive',
+          filename: `solebase-sync-smoke-drive-${runId}.db`,
+          encryptionKey: key,
+          workerUrl,
+          sync: {
+            provider: 'drive',
+            options: { memory: true, blobStore: driveBlobs, autoSync: false },
+          },
+        });
+        opened.push(driveDb);
+        await driveDb.collection('notes').insert({ title: 'drive-stub' });
+        const drivePush = await driveDb.syncNow('drive-stub');
+        assert(drivePush.ok && drivePush.pushed?.uploaded >= 1, 'drive stub push failed');
+        log('2) Drive stub provider push ✓', 'ok');
+
+        // ── 3) WebRTC P2P encrypted changeset exchange (manual SDP, no auto-signal) ──
+        log('3) WebRTC P2P loopback…');
+        /** @type {Uint8Array|null} */
+        let received = null;
+
+        const peerA = new SolebaseP2PSession({});
+        const peerB = new SolebaseP2PSession({
+          onChangeset: (bytes) => {
+            received = bytes;
+          },
+        });
+
+        const offer = await peerA.createOffer();
+        const answer = await peerB.acceptOffer(offer);
+        await peerA.acceptAnswer(answer);
+        await peerA._waitOpen();
+        await peerB._waitOpen();
+        log('   data channels open');
+
+        const fakePayload = {
+          v: 1,
+          changes: [],
+          cursor: 0,
+          since: 0,
+          smoke: true,
+        };
+        const pkg = await deviceA.encryptForSync(fakePayload);
+        const bytes = packCiphertextPackage(pkg);
+        await peerA.sendEncryptedChangeset(bytes);
+
+        await waitFor(() => received != null && received.byteLength > 0, 'P2P receive');
+        const again = await decryptChangeset(received, key);
+        assert(again && again.smoke === true, 'P2P decrypt mismatch');
+        log('   P2P encrypt→send→decrypt ✓', 'ok');
+
+        peerA.close();
+        peerB.close();
+
+        // End-to-end P2P merge into device B via transport helper
+        log('4) P2P merge into collection via sync transport…');
+        const syncA = deviceA.getSync();
+        const syncB = deviceB.getSync();
+        assert(syncA && syncB, 'missing sync transport');
+
+        const p2pB = new SolebaseP2PSession({
+          onChangeset: (b, meta) => {
+            void syncB.applyEncryptedBytes(b, { source: 'p2p-smoke', ...meta });
+          },
+        });
+        const p2pA = new SolebaseP2PSession({});
+        const offer2 = await p2pA.createOffer();
+        const answer2 = await p2pB.acceptOffer(offer2);
+        await p2pA.acceptAnswer(answer2);
+        await p2pA._waitOpen();
+        await p2pB._waitOpen();
+
+        const titleP2P = `p2p-${Date.now()}`;
+        const row = await notesA.insert({ title: titleP2P, body: 'over webrtc' });
+        const pushed = await syncA.pushLocal();
+        assert(pushed.uploaded >= 1, 'pushLocal after P2P insert uploaded nothing');
+        const keys = await sharedBlobs.list('solebase-changesets/syncSmoke/');
+        const lastKey = keys[keys.length - 1];
+        const lastBytes = await sharedBlobs.get(lastKey);
+        assert(lastBytes, 'missing blob after pushLocal');
+        await p2pA.sendEncryptedChangeset(lastBytes);
+
+        await waitFor(async () => {
+          const docs = await notesB.find();
+          return docs.some((d) => d.id === row.id && d.title === titleP2P);
+        }, 'B merge from P2P');
+        log(`   B merged P2P row ${row.id} ✓`, 'ok');
+        log(`   pushLocal uploaded=${pushed.uploaded}`);
+
+        p2pA.close();
+        p2pB.close();
+
+        log('');
+        log('SMOKE_SYNC_TRANSPORT_OK', 'ok');
+      } catch (err) {
+        console.error(err);
+        log(`FAIL: ${err instanceof Error ? err.message : String(err)}`, 'err');
+      } finally {
+        for (const db of opened) {
+          try {
+            await db.close();
+          } catch {
+            /* ignore */
+          }
+        }
+        btn.disabled = false;
+      }
+    }
+
+    btn.addEventListener('click', () => {
+      void run();
+    });
+  </script>
+</body>
+</html>

@@ -15,6 +15,7 @@ export {
   SolebaseError,
   type ConnectionStatus,
   type SyncProvider,
+  type SyncOptions,
   type SyncConfig,
   type SolebaseConfig,
   type Document,
@@ -28,3 +29,4 @@ export {
   type StatusHandler,
   type CollectionChangeOp,
 } from './types.js';
+export type { SolebaseSyncHandle } from './Solebase.js';

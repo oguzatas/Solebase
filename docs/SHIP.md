@@ -20,13 +20,14 @@ How to host, install, go offline, and share — without confusing **host** with 
                             │ optional (Settings)
                             ▼
 ┌─────────────────────────────────────────────────────────────┐
-│  SYNC (encrypted snapshot)                                  │
-│  Drive / WebDAV / S3 + passphrase. Separate from hosting.   │
-│  Same adapter + same passphrase on each device to merge.    │
+│  SYNC (Solebase E2EE changesets)                            │
+│  WebRTC P2P + S3/Drive encrypted blobs. Separate from host. │
+│  Same sync.provider options + encryptionKey on each device. │
+│  Legacy examples may still use snapshot adapters (IndexedDB)│
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**QR / Share** only opens the same origin on another device. Then that device either stays local-only or you configure Sync in Settings.
+**QR / Share** opens the same origin on another device and can carry WebRTC SDP for P2P. Hosting never syncs data by itself — see [`sync-transport.md`](sync-transport.md).
 
 Browsers **cannot** remotely push-install a PWA onto a phone. Closest flow: deploy once → open the HTTPS URL (or scan Share QR) → *Add to Home Screen* / *Install app* on that device.
 

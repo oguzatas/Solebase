@@ -14,16 +14,16 @@
  *
  *   CREATE TABLE IF NOT EXISTS "sb_<name>" (
  *     id TEXT PRIMARY KEY NOT NULL,
- *     doc TEXT NOT NULL,           -- JSON document (includes id)
- *     updated_at INTEGER NOT NULL  -- unix ms
+ *     doc TEXT NOT NULL DEFAULT '{}',  -- JSON document (includes id)
+ *     updated_at INTEGER NOT NULL DEFAULT 0  -- unix ms
  *   );
- *   SELECT crsql_as_crr('sb_<name>');  -- best-effort CRDT registration
+ *   SELECT crsql_as_crr('sb_<name>');  -- CRDT registration (needs DEFAULTs)
  *
  * Safe names: /^[A-Za-z][A-Za-z0-9_]*$/ (max 64). Apps never touch these tables
  * directly — use Solebase.collection() / WorkerBridge.
  */
 
-/** @typedef {'init'|'exec'|'run'|'select'|'close'|'EXEC'|'QUERY'|'collection_ensure'|'collection_insert'|'collection_update'|'collection_delete'|'collection_findById'|'collection_find'} DbRequestType */
+/** @typedef {'init'|'exec'|'run'|'select'|'close'|'EXEC'|'QUERY'|'collection_ensure'|'collection_insert'|'collection_update'|'collection_delete'|'collection_findById'|'collection_find'|'changeset_apply'} DbRequestType */
 
 /**
  * @typedef {object} DbRequest
@@ -37,6 +37,7 @@
  * @property {string} [name]      collection ops — logical collection name
  * @property {string} [docId]     collection ops — document id
  * @property {unknown} [doc]      collection insert/update — plain object
+ * @property {unknown} [payload]  changeset_apply — ChangesetPayload or ChangeRow[]
  */
 
 /**
@@ -56,11 +57,11 @@
  */
 
 /**
- * Unsolicited push from worker after collection mutations (local or future remote merges).
+ * Unsolicited push from worker after collection mutations or remote merges.
  * @typedef {object} DbNotify
  * @property {'NOTIFY'} type
  * @property {string} collection
- * @property {'insert'|'update'|'delete'} op
+ * @property {'insert'|'update'|'delete'|'merge'} op
  * @property {string} id
  * @property {unknown} [doc]
  */
@@ -81,10 +82,25 @@ export const DB_REQUEST_TYPES = Object.freeze([
   'collection_delete',
   'collection_findById',
   'collection_find',
+  'changeset_apply',
 ]);
 
 /** Prefix for per-collection CRR tables. */
 export const COLLECTION_TABLE_PREFIX = 'sb_';
+
+/**
+ * Map a CRR table name back to a Layer 1 collection (sb_notes → notes).
+ * @param {string} table
+ * @returns {string|null}
+ */
+export function collectionNameFromTable(table) {
+  if (typeof table !== 'string' || !table.startsWith(COLLECTION_TABLE_PREFIX)) {
+    return null;
+  }
+  const name = table.slice(COLLECTION_TABLE_PREFIX.length);
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(name)) return null;
+  return name;
+}
 
 /**
  * Validate + map a logical collection name to a SQLite table identifier.

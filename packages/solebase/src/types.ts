@@ -8,19 +8,55 @@ export type ConnectionStatus =
 
 export type SyncProvider = 'drive' | 's3';
 
+/**
+ * Sync options for S3 / Drive blob store + optional WebRTC P2P.
+ * Encryption always uses SolebaseConfig.encryptionKey (never plaintext on the wire).
+ */
+export interface SyncOptions {
+  /** Force in-memory blob store (smoke / offline unit tests). */
+  memory?: boolean;
+  /** Allow MemoryBlobStore when S3 credentials are incomplete (default true). */
+  allowMemoryFallback?: boolean;
+  /** S3 endpoint (path-style), e.g. https://xxx.r2.cloudflarestorage.com */
+  endpoint?: string;
+  region?: string;
+  bucket?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  /** Blob key prefix (default solebase-changesets). */
+  prefix?: string;
+  /** Drive stub: OAuth access token (live API not wired yet). */
+  accessToken?: string;
+  folderId?: string;
+  /** Enable WebRTC P2P alongside blob sync. */
+  p2p?: boolean | Record<string, unknown>;
+  /** Auto push/pull on local writes + poll (default true when sync configured). */
+  autoSync?: boolean;
+  pollIntervalMs?: number;
+  debounceMs?: number;
+  /** Inject a pre-built blob store (tests). */
+  blobStore?: unknown;
+  [key: string]: unknown;
+}
+
 export interface SyncConfig {
   provider: SyncProvider;
-  options?: Record<string, unknown>;
+  options?: SyncOptions;
 }
 
 export interface SolebaseConfig {
   /** Logical app / database id (used for OPFS filename). */
   appId: string;
-  /** Held for future E2EE sync (S3/Drive changesets). */
+  /** E2EE key for changeset encrypt/decrypt (S3/Drive + P2P). */
   encryptionKey: string;
-  /** Optional async sync provider stub (stored; not started by Layer 1). */
+  /** Async sync: S3 or Drive-shaped blobs + optional WebRTC P2P. */
   sync?: SyncConfig;
-  /** Override module-worker URL (default: core/db-worker.js relative to importer). */
+  /**
+   * OPFS database filename override (default `solebase-${appId}.db`).
+   * Use distinct filenames when simulating multiple devices in one origin (smoke).
+   */
+  filename?: string;
+  /** Override module-worker URL (default: core/db-worker.js relative to the importer). */
   workerUrl?: string | URL;
   /** Optional crsqlite.wasm override. */
   wasmUrl?: string;
@@ -33,7 +69,14 @@ export interface Document {
 }
 
 /** Layer 1 RPC request types over WorkerBridge. */
-export type RpcType = 'EXEC' | 'QUERY' | 'NOTIFY' | 'INIT' | 'CLOSE' | CollectionRpcType;
+export type RpcType =
+  | 'EXEC'
+  | 'QUERY'
+  | 'NOTIFY'
+  | 'INIT'
+  | 'CLOSE'
+  | 'changeset_apply'
+  | CollectionRpcType;
 
 export type CollectionRpcType =
   | 'collection_ensure'
@@ -106,6 +149,11 @@ export interface CollectionFindRequest extends RpcRequestBase {
   name: string;
 }
 
+export interface ChangesetApplyRequest extends RpcRequestBase {
+  type: 'changeset_apply';
+  payload: unknown;
+}
+
 export type RpcRequest =
   | ExecRequest
   | QueryRequest
@@ -116,7 +164,8 @@ export type RpcRequest =
   | CollectionUpdateRequest
   | CollectionDeleteRequest
   | CollectionFindByIdRequest
-  | CollectionFindRequest;
+  | CollectionFindRequest
+  | ChangesetApplyRequest;
 
 export interface RpcSuccess<T = unknown> {
   requestId: string;
@@ -134,9 +183,9 @@ export interface RpcError {
 
 export type RpcResponse<T = unknown> = RpcSuccess<T> | RpcError;
 
-export type CollectionChangeOp = 'insert' | 'update' | 'delete';
+export type CollectionChangeOp = 'insert' | 'update' | 'delete' | 'merge';
 
-/** Unsolicited worker push (local mutations or future remote merges). */
+/** Unsolicited worker push (local mutations or remote changeset merges). */
 export interface NotifyEvent<T extends Document = Document> {
   type: 'NOTIFY';
   collection: string;

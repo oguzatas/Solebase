@@ -24,7 +24,7 @@ export const CHANGESET_FORMAT_V = 1;
 /**
  * @typedef {object} ChangeRow
  * @property {string} table
- * @property {string} pk
+ * @property {unknown} pk  string or `{ $b64 }` for binary cr-sqlite PK blob
  * @property {string} cid
  * @property {unknown} val
  * @property {number} col_version
@@ -112,7 +112,8 @@ export function normalizeChangeRow(row) {
   const table = /** @type {string} */ (row.table ?? row.table_name);
   return {
     table,
-    pk: String(row.pk ?? ''),
+    // PK is a cr-sqlite-encoded BLOB — must survive JSON/E2EE as `{ $b64 }`, not String(Uint8Array).
+    pk: toWireValue(row.pk ?? ''),
     cid: String(row.cid ?? ''),
     val: toWireValue(row.val),
     col_version: Number(row.col_version ?? 0),
@@ -255,7 +256,7 @@ export async function applyChangeset(dbClient, payload) {
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         table,
-        row.pk,
+        fromWireValue(row.pk),
         row.cid,
         fromWireValue(row.val),
         row.col_version,

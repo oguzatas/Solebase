@@ -18,7 +18,10 @@ Local relational storage for **Solebase** (formerly Prompt2UI). This layer is **
 | [`core/db-client.js`](../core/db-client.js) | Main-thread Promise RPC over `postMessage` |
 | [`core/yjs-sqlite-provider.js`](../core/yjs-sqlite-provider.js) | Yjs doc persistence in `yjs_documents` (see [`yjs-provider.md`](yjs-provider.md)) |
 | [`core/sync-changesets.js`](../core/sync-changesets.js) | Extract / apply `crsql_changes` (see [`sync-changesets.md`](sync-changesets.md)) |
-| [`core/sync-crypto.js`](../core/sync-crypto.js) | AES-GCM changeset encryption for future S3/Drive blobs |
+| [`core/sync-crypto.js`](../core/sync-crypto.js) | AES-GCM changeset encryption for S3/Drive/P2P blobs |
+| [`core/sync-blob-store.js`](../core/sync-blob-store.js) | S3 / Drive-shaped / memory blob stores |
+| [`core/sync-p2p.js`](../core/sync-p2p.js) | WebRTC DataChannel transport |
+| [`core/sync-transport.js`](../core/sync-transport.js) | Orchestrator (see [`sync-transport.md`](sync-transport.md)) |
 
 ## CDN / zero-build
 

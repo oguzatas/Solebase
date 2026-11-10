@@ -22,7 +22,14 @@ const db = await Solebase.init({
   encryptionKey: 'device-secret',
   // workerUrl optional — defaults to core/db-worker.js relative to the package dist
   workerUrl: new URL('../core/db-worker.js', import.meta.url),
-  sync: { provider: 's3', options: { /* stub */ } },
+  sync: {
+    provider: 's3', // or 'drive'
+    options: {
+      // Real S3: endpoint, bucket, accessKeyId, secretAccessKey, region
+      // Smoke: memory: true
+      // Optional: p2p: true (manual SDP / QR signaling)
+    },
+  },
 });
 
 const notes = db.collection('notes');
@@ -53,8 +60,8 @@ One CRR table per collection: `sb_<name>`
 ```sql
 CREATE TABLE IF NOT EXISTS "sb_notes" (
   id TEXT PRIMARY KEY NOT NULL,
-  doc TEXT NOT NULL,            -- JSON document (includes id)
-  updated_at INTEGER NOT NULL   -- unix ms
+  doc TEXT NOT NULL DEFAULT '{}',           -- JSON document (includes id)
+  updated_at INTEGER NOT NULL DEFAULT 0    -- unix ms (DEFAULT required by cr-sqlite CRR)
 );
 SELECT crsql_as_crr('sb_notes');
 ```
@@ -77,22 +84,36 @@ Unsolicited pushes:
 
 Connection status: `connecting` | `connected` | `disconnected` | `error`.
 
-## Sync stub
+## Sync transport
 
-`sync: { provider: 'drive' | 's3', options? }` is validated and held on the instance. Layer 1 does **not** start WebRTC or cloud uploads. `encryptionKey` is available via `getEncryptionKey()` and `encryptForSync()` (wraps `core/sync-crypto.js`) for future changeset E2EE.
+`sync: { provider: 'drive' | 's3', options? }` starts [`SolebaseSyncTransport`](sync-transport.md) after INIT:
+
+- Encrypts extracted changesets with `encryptionKey`
+- Uploads to S3 or Drive-shaped blob store; optional WebRTC P2P
+- Applies remote packages via worker `changeset_apply` → `NOTIFY` → `collection.subscribe`
+
+```js
+db.getSync();           // transport handle or null
+await db.syncNow();     // manual push/pull
+await db.encryptForSync(payload);
+```
+
+See [`sync-transport.md`](sync-transport.md) for S3 credentials, Drive stub, and SDP signaling.
 
 ## Smoke
 
 ```text
 http://localhost:8080/examples/smoke-solebase/
+http://localhost:8080/examples/smoke-sync-transport/
 ```
 
 ```bash
 python -m http.server 8765 --bind 127.0.0.1
 node scripts/smoke-solebase.mjs
+node scripts/smoke-sync-transport.mjs
 ```
 
-Expect `SMOKE_SOLEBASE_OK`.
+Expect `SMOKE_SOLEBASE_OK` / `SMOKE_SYNC_TRANSPORT_OK`.
 
 ## Rules reminder
 

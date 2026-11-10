@@ -9,6 +9,7 @@
  *   exec / run / EXEC → parameterized SQL (CREATE / INSERT / UPDATE / DELETE / …)
  *   select / QUERY → parameterized SELECT → array of row objects
  *   collection_* → Layer 1 JSON-doc CRRs + NOTIFY
+ *   changeset_apply → merge remote crsql_changes + NOTIFY affected collections
  *   close  → close db handle
  *
  * Responses: { id, requestId?, ok: true, result? } | { id, requestId?, ok: false, error }
@@ -21,8 +22,11 @@
 import {
   CRS_WASM_CDN,
   DEFAULT_DB_FILENAME,
+  COLLECTION_TABLE_PREFIX,
   collectionTableName,
+  collectionNameFromTable,
 } from './db-protocol.js';
+import { b64ToBuf } from './sync-crypto.js';
 
 /** @type {any} */
 let sqlite3 = null;
@@ -109,7 +113,7 @@ function respond(key, ok, resultOrError) {
 
 /**
  * @param {string} collection
- * @param {'insert'|'update'|'delete'} op
+ * @param {'insert'|'update'|'delete'|'merge'} op
  * @param {string} id
  * @param {unknown} [doc]
  */
@@ -121,9 +125,119 @@ function emitNotify(collection, op, id, doc) {
 }
 
 /**
- * @param {string} [wasmUrl]
+ * Decode wire values from sync-changesets (base64 site_id / { $b64 } val).
+ * @param {unknown} value
+ * @returns {unknown}
  */
-async function loadSqlite(wasmUrl) {
+function fromWireValue(value) {
+  if (
+    value &&
+    typeof value === 'object' &&
+    !Array.isArray(value) &&
+    typeof /** @type {{ $b64?: string }} */ (value).$b64 === 'string'
+  ) {
+    return b64ToBuf(/** @type {{ $b64: string }} */ (value).$b64);
+  }
+  return value;
+}
+
+/**
+ * @param {string|null|undefined} siteIdB64
+ * @returns {Uint8Array|null}
+ */
+function siteIdFromB64(siteIdB64) {
+  if (siteIdB64 == null || siteIdB64 === '') return null;
+  return b64ToBuf(siteIdB64);
+}
+
+/**
+ * Apply a remote changeset and notify Layer 1 subscribers for affected
+ * `sb_*` collections.
+ * @param {unknown} payload
+ * @returns {Promise<{ applied: number, collections: string[] }>}
+ */
+async function applyChangesetPayload(payload) {
+  const changes = Array.isArray(payload)
+    ? payload
+    : Array.isArray(/** @type {{ changes?: unknown }} */ (payload)?.changes)
+      ? /** @type {{ changes: object[] }} */ (payload).changes
+      : null;
+
+  if (!changes) {
+    throw new Error('changeset_apply: expected ChangesetPayload or ChangeRow[]');
+  }
+
+  /** @type {Set<string>} */
+  const collections = new Set();
+  let applied = 0;
+
+  for (const row of changes) {
+    const table = /** @type {{ table?: string }} */ (row).table;
+    if (!table) throw new Error('changeset_apply: change row missing table');
+
+    try {
+      await runSql(
+        `INSERT INTO crsql_changes
+          ("table", "pk", "cid", "val", "col_version", "db_version", "site_id", "cl", "seq")
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          table,
+          fromWireValue(row.pk),
+          row.cid,
+          fromWireValue(row.val),
+          row.col_version,
+          row.db_version,
+          siteIdFromB64(row.site_id),
+          row.cl,
+          row.seq,
+        ],
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `changeset_apply failed on ${table}.${row.cid} @db_version=${row.db_version}: ${msg}`,
+      );
+    }
+    applied += 1;
+
+    const collection = collectionNameFromTable(table);
+    if (collection) {
+      collections.add(collection);
+      ensuredCollections.add(collection);
+    } else if (
+      typeof table === 'string' &&
+      table.startsWith(COLLECTION_TABLE_PREFIX)
+    ) {
+      // Unknown / invalid suffix — still mark prefix awareness.
+    }
+  }
+
+  const list = [...collections];
+  for (const name of list) {
+    emitNotify(name, 'merge', '*');
+  }
+
+  return { applied, collections: list };
+}
+
+/**
+ * OPFS AccessHandlePoolVFS directory/name must be unique per open DB.
+ * Two workers sharing one pool name fight over sync-access handles.
+ * @param {string} filename
+ */
+function vfsNameForFilename(filename) {
+  const safe = String(filename || DEFAULT_DB_FILENAME)
+    .replace(/[^A-Za-z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+  return `solebase-${safe || 'db'}`;
+}
+
+/**
+ * @param {string} [wasmUrl]
+ * @param {string} [vfsName]
+ */
+async function loadSqlite(wasmUrl, vfsName = 'solebase-crsqlite') {
   const SQLiteAsyncESMFactory = (await import(CRS_WASM_CDN.factory)).default;
   const SQLite = await import(CRS_WASM_CDN.waSqlite);
   const { AccessHandlePoolVFS } = await import(CRS_WASM_CDN.accessHandlePoolVfs);
@@ -142,10 +256,10 @@ async function loadSqlite(wasmUrl) {
   });
 
   const api = SQLite.Factory(wasmModule);
-  const vfs = new AccessHandlePoolVFS('solebase-crsqlite');
+  const vfs = new AccessHandlePoolVFS(vfsName);
   await vfs.isReady;
   api.vfs_register(vfs, false);
-  return { api, SQLiteModule: SQLite };
+  return { api, SQLiteModule: SQLite, vfsName };
 }
 
 /**
@@ -160,7 +274,8 @@ async function ensureInit(opts = {}) {
 
   initPromise = (async () => {
     const filename = opts.filename || DEFAULT_DB_FILENAME;
-    const { api, SQLiteModule } = await loadSqlite(opts.wasmUrl);
+    const vfsName = vfsNameForFilename(filename);
+    const { api, SQLiteModule } = await loadSqlite(opts.wasmUrl, vfsName);
     sqlite3 = api;
     SQLiteConsts = SQLiteModule;
 
@@ -169,6 +284,8 @@ async function ensureInit(opts = {}) {
       SQLiteModule.SQLITE_OPEN_READWRITE |
       SQLiteModule.SQLITE_OPEN_URI;
 
+    // AccessHandlePoolVFS always exposes zName "AccessHandlePool"; the
+    // constructor arg is only the OPFS directory (unique per DB above).
     dbPtr = await api.open_v2(filename, flags, 'AccessHandlePool');
     openFilename = filename;
     ensuredCollections.clear();
@@ -252,18 +369,20 @@ async function ensureCollection(name) {
   const table = collectionTableName(name);
   if (ensuredCollections.has(name)) return table;
 
+  // cr-sqlite requires DEFAULT on non-PK NOT NULL columns for forwards/backwards schema compat.
   await runSql(
     `CREATE TABLE IF NOT EXISTS "${table}" (
       id TEXT PRIMARY KEY NOT NULL,
-      doc TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
+      doc TEXT NOT NULL DEFAULT '{}',
+      updated_at INTEGER NOT NULL DEFAULT 0
     )`,
     [],
   );
 
   try {
     // Table name is validated by collectionTableName(); crsql_as_crr needs a literal.
-    await runSql(`SELECT crsql_as_crr('${table}')`, []);
+    // Must collect rows so the SELECT side-effect fully runs under wa-sqlite.
+    await runSql(`SELECT crsql_as_crr('${table}') AS ok`, [], { rows: true });
   } catch (err) {
     // Plain SQL still works if CRR registration fails (older wasm / already CRR).
     console.warn('[db-worker] crsql_as_crr failed for', table, err);
@@ -452,6 +571,15 @@ async function handleMessage(msg) {
           return out;
         });
         return respond(key, true, toCloneable(docs));
+      }
+
+      case 'changeset_apply': {
+        if (msg.payload == null) {
+          return respond(key, false, 'changeset_apply requires payload');
+        }
+        await enqueue(() => ensureInit());
+        const result = await enqueue(() => applyChangesetPayload(msg.payload));
+        return respond(key, true, toCloneable(result));
       }
 
       case 'close': {
