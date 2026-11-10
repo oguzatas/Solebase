@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prompt2UI — Sync changesets + E2EE smoke</title>
+  <style>
+    :root {
+      --bg: #0c0e11;
+      --panel: #161a20;
+      --text: #e6e9ee;
+      --muted: #6b7380;
+      --ok: #7a9e8a;
+      --err: #c47878;
+      --border: #2a323d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Figtree, ui-sans-serif, system-ui, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1a2420, var(--bg));
+      color: var(--text);
+      padding: 2rem 1.25rem 3rem;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.35rem; }
+    p { color: var(--muted); margin: 0 0 1.25rem; line-height: 1.45; max-width: 42rem; }
+    button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      padding: 0.55rem 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover { border-color: var(--ok); }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    pre {
+      margin-top: 1.25rem;
+      padding: 1rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      min-height: 8rem;
+      font-size: 0.85rem;
+    }
+    .ok { color: var(--ok); }
+    .err { color: var(--err); }
+    code { color: var(--ok); }
+  </style>
+</head>
+<body>
+  <h1>Sync changesets + E2EE smoke</h1>
+  <p>
+    Mutates a CRR via Layer 3 <code>db-client</code>, extracts <code>crsql_changes</code>
+    since cursor 0, encrypts/decrypts with AES-GCM, asserts equality, then advances the cursor.
+  </p>
+  <button id="run" type="button">Run smoke</button>
+  <pre id="out">Ready.</pre>
+
+  <script type="module">
+    import { createDbClient } from '../../core/db-client.js';
+    import {
+      ensureSmokeCrr,
+      getChangesSince,
+      getDbVersion,
+    } from '../../core/sync-changesets.js';
+    import {
+      encryptChangeset,
+      decryptChangeset,
+      packCiphertextPackage,
+      unpackCiphertextPackage,
+    } from '../../core/sync-crypto.js';
+
+    const out = document.getElementById('out');
+    const btn = document.getElementById('run');
+
+    function log(line, cls) {
+      const span = document.createElement('span');
+      if (cls) span.className = cls;
+      span.textContent = line + '\n';
+      out.appendChild(span);
+    }
+
+    function assert(cond, msg) {
+      if (!cond) throw new Error(msg || 'assertion failed');
+    }
+
+    function stableStringify(value) {
+      return JSON.stringify(value, (_, v) => {
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+          const sorted = {};
+          for (const k of Object.keys(v).sort()) sorted[k] = v[k];
+          return sorted;
+        }
+        return v;
+      });
+    }
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      out.textContent = '';
+      let client;
+      try {
+        if (!window.isSecureContext) {
+          throw new Error('Not a secure context — use localhost or https');
+        }
+        if (!navigator.storage?.getDirectory) {
+          throw new Error('OPFS not available in this browser');
+        }
+
+        const passphrase = 'smoke-passphrase-do-not-use-in-prod';
+        const workerUrl = new URL('../../core/db-worker.js', import.meta.url);
+        const filename = `prompt2ui-sync-smoke-${Date.now()}.db`;
+        client = createDbClient({ workerUrl, filename });
+
+        log('init…');
+        const info = await client.init();
+        log(JSON.stringify(info), 'ok');
+
+        await ensureSmokeCrr(client, 'sync_items');
+        log('CRR sync_items ready', 'ok');
+
+        const before = await getDbVersion(client);
+        log(`db_version before mutate: ${before}`);
+
+        await client.insert(
+          'INSERT INTO sync_items (id, body, updated_at) VALUES (?, ?, ?)',
+          ['a1', 'hello-sync', Date.now()],
+        );
+        await client.update(
+          'UPDATE sync_items SET body = ?, updated_at = ? WHERE id = ?',
+          ['hello-sync-2', Date.now(), 'a1'],
+        );
+        log('mutated CRR rows', 'ok');
+
+        const batch1 = await getChangesSince(client, 0);
+        log(`extracted ${batch1.changes.length} change(s); cursor=${batch1.cursor}`, 'ok');
+        assert(batch1.changes.length > 0, 'expected changes after mutate');
+        assert(batch1.cursor > 0, 'expected cursor > 0');
+
+        const pkg = await encryptChangeset(batch1, passphrase);
+        assert(pkg.iv && pkg.ciphertext && pkg.salt, 'encrypt package incomplete');
+        log('encryptChangeset ok', 'ok');
+
+        // Wrong passphrase must fail clearly (no plaintext leak).
+        let wrongFailed = false;
+        try {
+          await decryptChangeset(pkg, 'wrong-passphrase');
+        } catch (err) {
+          wrongFailed = /wrong key|passphrase|corrupted/i.test(err?.message || '');
+          log('wrong passphrase → ' + (err?.message || String(err)), 'ok');
+        }
+        assert(wrongFailed, 'expected clear error on wrong passphrase');
+
+        const roundTrip = await decryptChangeset(pkg, passphrase);
+        assert(
+          stableStringify(roundTrip.changes) === stableStringify(batch1.changes),
+          'decrypt JSON !== original changes',
+        );
+        assert(roundTrip.cursor === batch1.cursor, 'cursor mismatch after decrypt');
+        log('decryptChangeset equality ok', 'ok');
+
+        const packed = packCiphertextPackage(pkg);
+        const unpacked = unpackCiphertextPackage(packed);
+        const fromPacked = await decryptChangeset(unpacked, passphrase);
+        assert(
+          stableStringify(fromPacked.changes) === stableStringify(batch1.changes),
+          'packed blob round-trip failed',
+        );
+        log('pack/unpack blob ok', 'ok');
+
+        const cursor = batch1.cursor;
+        const empty = await getChangesSince(client, cursor);
+        assert(empty.changes.length === 0, 'expected empty extract after cursor advance');
+        assert(empty.cursor === cursor, 'cursor should stay when no new changes');
+        log(`extract since ${cursor} → empty ok`, 'ok');
+
+        await client.insert(
+          'INSERT INTO sync_items (id, body, updated_at) VALUES (?, ?, ?)',
+          ['b2', 'second', Date.now()],
+        );
+        const batch2 = await getChangesSince(client, cursor);
+        assert(batch2.changes.length > 0, 'expected new changes after second mutate');
+        assert(batch2.cursor > cursor, 'expected advanced cursor');
+        log(`second extract: ${batch2.changes.length} change(s); cursor=${batch2.cursor}`, 'ok');
+
+        log('SMOKE_SYNC_CHANGESETS_OK', 'ok');
+      } catch (err) {
+        console.error(err);
+        log('FAIL: ' + (err?.message || String(err)), 'err');
+      } finally {
+        try { client?.terminate(); } catch { /* ignore */ }
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

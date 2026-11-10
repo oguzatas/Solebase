@@ -17,6 +17,8 @@ Local relational storage for Prompt2UI. This layer is **new**; the notes/calorie
 | [`core/db-worker.js`](../core/db-worker.js) | Module worker: init OPFS db, `exec`/`run`/`select` |
 | [`core/db-client.js`](../core/db-client.js) | Main-thread Promise RPC over `postMessage` |
 | [`core/yjs-sqlite-provider.js`](../core/yjs-sqlite-provider.js) | Yjs doc persistence in `yjs_documents` (see [`yjs-provider.md`](yjs-provider.md)) |
+| [`core/sync-changesets.js`](../core/sync-changesets.js) | Extract / apply `crsql_changes` (see [`sync-changesets.md`](sync-changesets.md)) |
+| [`core/sync-crypto.js`](../core/sync-crypto.js) | AES-GCM changeset encryption for future S3/Drive blobs |
 
 ## CDN / zero-build
 

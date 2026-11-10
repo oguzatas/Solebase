@@ -6,7 +6,7 @@ One folder = one personal app. The **root** is a blank canvas. **examples/** are
 
 No npm bundler. Pure ES modules, Tailwind CDN, Web Crypto, installable PWA.
 
-**Layer 3 (storage, in progress):** OPFS-backed **cr-sqlite** in a Web Worker — see [`docs/layer3-storage.md`](docs/layer3-storage.md) (`examples/smoke-db/`) and Yjs persistence in [`docs/yjs-provider.md`](docs/yjs-provider.md) (`examples/smoke-yjs/`). Example apps still use legacy IndexedDB until migration.
+**Layer 3 (storage, in progress):** OPFS-backed **cr-sqlite** in a Web Worker — see [`docs/layer3-storage.md`](docs/layer3-storage.md) (`examples/smoke-db/`), Yjs persistence in [`docs/yjs-provider.md`](docs/yjs-provider.md) (`examples/smoke-yjs/`), and changeset extract + E2EE in [`docs/sync-changesets.md`](docs/sync-changesets.md) (`examples/smoke-sync-changesets/`). Example apps still use legacy IndexedDB until migration.
 
 ## Host vs sync vs offline (product truth)
 
