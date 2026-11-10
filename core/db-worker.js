@@ -50,6 +50,7 @@ function enqueue(fn) {
 
 /**
  * Convert values that postMessage cannot clone (BigInt, etc.).
+ * Preserve binary views (Uint8Array BLOBs) — Object.entries would mangle them.
  * @param {unknown} value
  * @returns {unknown}
  */
@@ -58,6 +59,8 @@ function toCloneable(value) {
     const asNumber = Number(value);
     return Number.isSafeInteger(asNumber) ? asNumber : value.toString();
   }
+  if (value instanceof ArrayBuffer) return value;
+  if (ArrayBuffer.isView(value)) return value;
   if (Array.isArray(value)) return value.map(toCloneable);
   if (value && typeof value === 'object') {
     /** @type {Record<string, unknown>} */

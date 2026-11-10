@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prompt2UI — Yjs SQLite provider smoke</title>
+  <style>
+    :root {
+      --bg: #0c0e11;
+      --panel: #161a20;
+      --text: #e6e9ee;
+      --muted: #6b7380;
+      --ok: #7a9e8a;
+      --err: #c47878;
+      --border: #2a323d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: Figtree, ui-sans-serif, system-ui, sans-serif;
+      background: radial-gradient(1200px 600px at 20% -10%, #1a2420, var(--bg));
+      color: var(--text);
+      padding: 2rem 1.25rem 3rem;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 0.35rem; }
+    p { color: var(--muted); margin: 0 0 1.25rem; line-height: 1.45; max-width: 42rem; }
+    button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--text);
+      padding: 0.55rem 1rem;
+      border-radius: 8px;
+      cursor: pointer;
+      font: inherit;
+    }
+    button:hover { border-color: var(--ok); }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    pre {
+      margin-top: 1.25rem;
+      padding: 1rem;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      min-height: 8rem;
+      font-size: 0.85rem;
+    }
+    .ok { color: var(--ok); }
+    .err { color: var(--err); }
+    code { color: var(--ok); }
+  </style>
+</head>
+<body>
+  <h1>Yjs → cr-sqlite provider smoke</h1>
+  <p>
+    Opens Layer 3 via <code>createDbClient</code>, persists a <code>Y.Doc</code> /
+    <code>Y.Text</code> with <code>YjsSqliteProvider</code>, reloads, and asserts
+    the text survives. No IndexedDB.
+  </p>
+  <button id="run" type="button">Run smoke</button>
+  <pre id="out">Ready.</pre>
+
+  <script type="module">
+    import { createDbClient } from '../../core/db-client.js';
+    import { openYDoc } from '../../core/yjs-sqlite-provider.js';
+
+    const out = document.getElementById('out');
+    const btn = document.getElementById('run');
+    const DOC_ID = 'smoke:yjs:body';
+    const PAYLOAD = 'hello-from-yjs-' + Date.now();
+
+    function log(line, cls) {
+      const span = document.createElement('span');
+      if (cls) span.className = cls;
+      span.textContent = line + '\n';
+      out.appendChild(span);
+    }
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      out.textContent = '';
+      let client;
+      try {
+        if (!window.isSecureContext) {
+          throw new Error('Not a secure context — use localhost or https');
+        }
+        if (!navigator.storage?.getDirectory) {
+          throw new Error('OPFS not available in this browser');
+        }
+
+        const workerUrl = new URL('../../core/db-worker.js', import.meta.url);
+        client = createDbClient({
+          workerUrl,
+          filename: 'prompt2ui-smoke-yjs.db',
+        });
+
+        log('init db…');
+        const info = await client.init();
+        log(JSON.stringify(info), 'ok');
+
+        log('openYDoc + insert text…');
+        const first = await openYDoc(client, DOC_ID, { debounceMs: 0 });
+        first.doc.getText('body').insert(0, PAYLOAD);
+        await first.provider.flush();
+        log('persisted: ' + JSON.stringify(first.doc.getText('body').toString()), 'ok');
+        await first.provider.destroy();
+
+        log('reload provider…');
+        const second = await openYDoc(client, DOC_ID, { debounceMs: 0 });
+        const got = second.doc.getText('body').toString();
+        log('reloaded: ' + JSON.stringify(got), 'ok');
+        if (got !== PAYLOAD) {
+          throw new Error(`content mismatch: expected ${JSON.stringify(PAYLOAD)} got ${JSON.stringify(got)}`);
+        }
+        await second.provider.destroy();
+
+        log('SMOKE_YJS_OK', 'ok');
+      } catch (err) {
+        console.error(err);
+        log('FAIL: ' + (err?.message || String(err)), 'err');
+      } finally {
+        try { client?.terminate(); } catch { /* ignore */ }
+        btn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
