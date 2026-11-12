@@ -4,7 +4,7 @@
 
 **Cloneable · Zero-build · Local-first · E2EE** starter for personal hobby apps.
 
-One folder = one personal app. The **root** is a Solebase local wiki starter. **examples/** are use-ready apps you can copy or serve alone.
+One folder = one personal app. The **root** is a Solebase how-to / library welcome page. **examples/** are use-ready apps you can copy or serve alone.
 
 No npm bundler for apps. Pure ES modules, Tailwind CDN, Web Crypto, installable PWA. The Layer 1 library is TypeScript under `packages/solebase/` (compile with `npx tsc`; browsers import `packages/solebase/dist/`).
 
@@ -46,7 +46,7 @@ cd prompt2ui   # repo folder; product name is Solebase
 python -m http.server 8080
 ```
 
-Open http://localhost:8080 — Solebase local wiki (list / open / create / edit / delete pages via Layer 1).
+Open http://localhost:8080 — Solebase how-to welcome (what it is, `Solebase.init`, `collection`, sync overview, links to docs/smoke).
 
 ### Calorie Tracker example
 
@@ -67,18 +67,18 @@ Use `localhost`, not `file://`.
 ## One-app-per-folder model
 
 ```
-prompt2ui/                      # Solebase wiki starter (product: Solebase)
+prompt2ui/                      # Solebase how-to welcome (product: Solebase)
   packages/solebase/            # Layer 1 TypeScript API → dist/ ESM
   core/                         # Layer 3 engines (worker, crypto, sync)
-  app/wiki.js                   # local-first wiki UI
-  index.html, app.js, sw.js …
+  app/blank.js                  # optional personal-app canvas stub
+  index.html, app.js, sw.js …   # static docs landing at /
 examples/
   smoke-solebase/               # Layer 1 smoke
   calorie-tracker/              # self-contained (own core/) — legacy IDB
   notes/                        # self-contained (own core/) — legacy IDB
 ```
 
-AI (or you) edits `app/` only. New apps should use **Solebase** Layer 1; persistence stays in the worker.
+AI (or you) edits `app/` for a personal app. New apps should use **Solebase** Layer 1; persistence stays in the worker.
 
 ## Design (quiet utility)
 
@@ -139,7 +139,7 @@ Second device: same origin/files → same adapter config → same passphrase →
 
 ```bash
 node --check app.js
-node --check app/wiki.js
+node --check app/blank.js
 node --check examples/calorie-tracker/app/calorie-tracker.js
 node --check examples/notes/app/notes.js
 node --check core/db-client.js

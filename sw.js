@@ -1,14 +1,13 @@
 /**
- * sw.js — Solebase wiki service worker
+ * sw.js — Solebase blank-starter service worker
  */
 
-const CACHE = 'solebase-wiki-v1';
+const CACHE = 'solebase-welcome-v1';
 
 const PRECACHE = [
   './',
   './index.html',
   './app.js',
-  './app/wiki.js',
   './manifest.json',
   './icons/icon.svg',
   './icons/icon-192.png',
@@ -39,7 +38,7 @@ self.addEventListener('fetch', (event) => {
     caches.match(request).then((cached) => {
       const fetched = fetch(request)
         .then((response) => {
-          if (response && response.ok && url.protocol.startsWith('http')) {
+          if (response && response.ok) {
             const copy = response.clone();
             caches.open(CACHE).then((cache) => cache.put(request, copy));
           }

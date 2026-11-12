@@ -1,7 +1,7 @@
 {
   "name": "Solebase",
   "short_name": "Solebase",
-  "description": "Local-first Solebase wiki — OPFS + cr-sqlite via Layer 1",
+  "description": "Solebase — local-first Layer 1 starter (OPFS + cr-sqlite)",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
