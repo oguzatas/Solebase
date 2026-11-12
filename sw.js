@@ -1,20 +1,14 @@
 /**
- * sw.js — Prompt2UI blank starter service worker
+ * sw.js — Solebase wiki service worker
  */
 
-const CACHE = 'prompt2ui-blank-v1';
+const CACHE = 'solebase-wiki-v1';
 
 const PRECACHE = [
   './',
   './index.html',
   './app.js',
-  './app/blank.js',
-  './core/db-api.js',
-  './core/prompt-db.js',
-  './core/prompt-crypto.js',
-  './core/prompt-storage.js',
-  './core/sync-engine.js',
-  './core/settings-panel.js',
+  './app/wiki.js',
   './manifest.json',
   './icons/icon.svg',
   './icons/icon-192.png',
@@ -38,32 +32,21 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   if (request.method !== 'GET') return;
-
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  if (request.mode === 'navigate') {
-    event.respondWith(
-      fetch(request)
-        .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put('./index.html', copy));
-          return res;
-        })
-        .catch(() => caches.match('./index.html'))
-    );
-    return;
-  }
-
   event.respondWith(
     caches.match(request).then((cached) => {
-      if (cached) return cached;
-      return fetch(request).then((res) => {
-        if (!res.ok) return res;
-        const copy = res.clone();
-        caches.open(CACHE).then((c) => c.put(request, copy));
-        return res;
-      });
+      const fetched = fetch(request)
+        .then((response) => {
+          if (response && response.ok && url.protocol.startsWith('http')) {
+            const copy = response.clone();
+            caches.open(CACHE).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(() => cached);
+      return cached || fetched;
     })
   );
 });

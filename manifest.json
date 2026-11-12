@@ -1,7 +1,7 @@
 {
-  "name": "Prompt2UI",
-  "short_name": "Prompt2UI",
-  "description": "Blank zero-build PWA starter — IndexedDB, E2EE, BYO cloud sync",
+  "name": "Solebase",
+  "short_name": "Solebase",
+  "description": "Local-first Solebase wiki — OPFS + cr-sqlite via Layer 1",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

@@ -1,18 +1,20 @@
 /**
- * app.js — Thin Prompt2UI shell (blank starter)
+ * app.js — Solebase wiki shell (root starter)
  *
- * Mounts the personal app under app/ and wires Settings. No sync UI here.
+ * Boots Layer 1 (OPFS + cr-sqlite worker) and mounts the wiki collection UI.
  */
 
-import { mount as mountApp } from './app/blank.js';
-import { initSettingsPanel } from './core/settings-panel.js';
+import { Solebase } from './packages/solebase/dist/index.js';
+import { mount as mountWiki } from './app/wiki.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 
 const mainPane = $('#main-pane');
 const toastEl = $('#toast');
+const statusEl = $('#conn-status');
 
 function toast(message, type = 'info') {
+  if (!toastEl) return;
   toastEl.textContent = message;
   toastEl.dataset.type = type;
   toastEl.classList.add('show');
@@ -20,26 +22,16 @@ function toast(message, type = 'info') {
   toast._t = setTimeout(() => toastEl.classList.remove('show'), 3200);
 }
 
-/** @type {{ unmount?: () => void, title?: string } | null} */
-let activeHandle = null;
-
-async function mountMainApp() {
-  if (activeHandle?.unmount) {
-    try {
-      activeHandle.unmount();
-    } catch {
-      /* ignore */
-    }
-  }
-  mainPane.innerHTML = '';
-  mainPane.classList.remove('pane-enter');
-  void mainPane.offsetWidth;
-  mainPane.classList.add('pane-enter');
-  activeHandle = await mountApp(mainPane);
-  const title = activeHandle?.title || 'App';
-  const titleEl = $('#topbar-title');
-  if (titleEl) titleEl.textContent = title;
+function setConnStatus(text, ok) {
+  if (!statusEl) return;
+  statusEl.textContent = text;
+  statusEl.dataset.ok = ok ? '1' : '0';
 }
+
+/** @type {{ unmount?: () => void } | null} */
+let activeHandle = null;
+/** @type {Solebase | null} */
+let db = null;
 
 function wireChrome() {
   $('#btn-menu')?.addEventListener('click', () => {
@@ -52,30 +44,56 @@ function wireChrome() {
 }
 
 async function boot() {
-  initSettingsPanel({
-    toast,
-    onImported: () => {
-      mountMainApp().catch((err) => toast(err.message, 'err'));
-    },
-  });
-
   wireChrome();
 
-  const params = new URLSearchParams(location.search);
-  if (params.get('code') && params.get('scope')?.includes('drive')) {
-    history.replaceState({}, '', location.pathname + location.hash);
+  if (!window.isSecureContext) {
+    throw new Error('Solebase needs a secure context — use http://localhost or https');
+  }
+  if (!navigator.storage?.getDirectory) {
+    throw new Error('OPFS is not available in this browser');
   }
 
-  try {
-    await mountMainApp();
-  } catch (err) {
-    toast(err.message || 'Failed to open app', 'err');
-  }
+  setConnStatus('Opening OPFS…', false);
 
+  const workerUrl = new URL('./core/db-worker.js', import.meta.url);
+  db = await Solebase.init({
+    appId: 'wiki',
+    encryptionKey: 'solebase-wiki-local-key',
+    workerUrl,
+    filename: 'solebase-wiki.db',
+  });
+
+  setConnStatus('Local · OPFS', true);
+  const titleEl = $('#topbar-title');
+  if (titleEl) titleEl.textContent = 'Wiki';
+
+  const pages = db.collection('pages');
+
+  if (activeHandle?.unmount) {
+    try {
+      activeHandle.unmount();
+    } catch {
+      /* ignore */
+    }
+  }
+  mainPane.innerHTML = '';
+  mainPane.classList.remove('pane-enter');
+  void mainPane.offsetWidth;
+  mainPane.classList.add('pane-enter');
+
+  activeHandle = await mountWiki(mainPane, { pages });
   document.documentElement.classList.add('booted');
 }
 
 boot().catch((err) => {
   console.error(err);
+  setConnStatus('Failed', false);
   toast(err.message || 'Boot failed', 'err');
+  if (mainPane) {
+    mainPane.innerHTML = `<p class="boot-error">${err.message || 'Boot failed'}</p>`;
+  }
+});
+
+window.addEventListener('beforeunload', () => {
+  void db?.close();
 });

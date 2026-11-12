@@ -1,12 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Prompt2UI">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Solebase">
   <defs>
     <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#2dd4bf"/>
-      <stop offset="100%" stop-color="#0f766e"/>
+      <stop offset="0%" stop-color="#a3bfb0"/>
+      <stop offset="100%" stop-color="#3d5c4a"/>
     </linearGradient>
   </defs>
   <rect width="128" height="128" rx="28" fill="#0b1017"/>
   <rect x="10" y="10" width="108" height="108" rx="22" fill="#151b24" stroke="#243041" stroke-width="2"/>
-  <path d="M36 84V44h22c12 0 20 6.5 20 17.5S70 79 58 79H48v5H36zm12-17h9c5.2 0 8.5-2.6 8.5-7.5S62.2 52 57 52h-9v15z" fill="url(#g)"/>
-  <circle cx="92" cy="40" r="8" fill="#2dd4bf" opacity="0.9"/>
+  <path d="M44 88c0-16 10-24 28-24h4v-6c0-7-4-11-12-11s-12 4-12 11h-12c0-14 10-22 24-22s24 9 24 23v41H72V88h-4c-10 0-12 4-12 10v6H44v-16z" fill="url(#g)"/>
 </svg>
