@@ -59,10 +59,10 @@ Any static host works (no Node server required). Serve over **HTTPS**.
 
 Yes — GitHub Pages works for Prompt2UI (static files + HTTPS).
 
-1. In the repo: **Settings → Pages → Build and deployment → GitHub Actions**.
-2. Push to `main` (this repo includes [`.github/workflows/pages.yml`](../.github/workflows/pages.yml)).
-3. Site URL is typically `https://<user>.github.io/prompt2ui/` (blank starter). Notes: `…/prompt2ui/examples/notes/`.
-4. On each device: open that URL → optional *Add to Home Screen* → Settings → Share QR for the next phone.
+1. In the repo: **Settings → Pages → Build and deployment → Source: GitHub Actions** (one click if not already set).
+2. Push to `main` (this repo includes [`.github/workflows/pages.yml`](../.github/workflows/pages.yml)) or run the workflow via **Actions → Deploy GitHub Pages → Run workflow**.
+3. Live URL for this repo: **[https://oguzatas.github.io/prompt2ui/](https://oguzatas.github.io/prompt2ui/)** (Solebase welcome). Notes: `…/prompt2ui/examples/notes/`. Calorie tracker: `…/prompt2ui/examples/calorie-tracker/`.
+4. On each device: open that URL → optional *Add to Home Screen*. Same URL ≠ shared data — configure Solebase sync (`appId` + `encryptionKey` + S3/P2P) per [sync-transport.md](sync-transport.md).
 
 That is “automatic create on Pages”: **deploy** is automatic; **install** still needs one open per device (browser rule, not something we can bypass).
 

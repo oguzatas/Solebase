@@ -1,4 +1,5 @@
-# Deploy the static Prompt2UI tree to GitHub Pages (free HTTPS host).
+# Deploy Solebase static tree to GitHub Pages (free HTTPS host).
+# Live URL: https://oguzatas.github.io/prompt2ui/
 # Enable once: repo Settings → Pages → Build and deployment → Source: GitHub Actions.
 name: Deploy GitHub Pages
 
@@ -29,11 +30,22 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      - name: Stage static site
+        run: |
+          # Serve welcome + examples + packages/solebase/dist + core (no .git).
+          mkdir -p _site
+          tar -C . \
+            --exclude='./.git' \
+            --exclude='./_site' \
+            --exclude='./node_modules' \
+            -cf - . | tar -C _site -xf -
+          touch _site/.nojekyll
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Whole repo: blank starter at / , examples under /examples/…
-          path: .
+          # Relative asset URLs work under /prompt2ui/ project Pages base.
+          path: _site
 
       - name: Deploy to GitHub Pages
         id: deployment

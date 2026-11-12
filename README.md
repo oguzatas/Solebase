@@ -6,6 +6,8 @@
 
 One folder = one personal app. The **root** is a Solebase how-to / library welcome page. **examples/** are use-ready apps you can copy or serve alone.
 
+**Live (GitHub Pages):** [https://oguzatas.github.io/prompt2ui/](https://oguzatas.github.io/prompt2ui/) — welcome + examples without cloning. If that 404s, enable once: repo **Settings → Pages → Build and deployment → Source: GitHub Actions**, then push to `main` (workflow: [`.github/workflows/pages.yml`](.github/workflows/pages.yml)).
+
 No npm bundler for apps. Pure ES modules, Tailwind CDN, Web Crypto, installable PWA. The Layer 1 library is TypeScript under `packages/solebase/` (compile with `npx tsc`; browsers import `packages/solebase/dist/`).
 
 **Layer 1 (Developer API):** `Solebase.init` / `collection()` — see [`docs/solebase-layer1.md`](docs/solebase-layer1.md) (`examples/smoke-solebase/`).
@@ -21,7 +23,7 @@ No npm bundler for apps. Pure ES modules, Tailwind CDN, Web Crypto, installable 
 | **Sync** | Optional encrypted snapshot to Drive / WebDAV / S3 with a passphrase | Part of hosting. Configure it separately in Settings. |
 | **QR / Share** | Opens the **same origin** on another device | A native binary install. After open: configure sync **or** stay local-only on that device. |
 
-Ship guide (GitHub Pages, free tiers, tunnels, why LAN install fails): **[docs/SHIP.md](docs/SHIP.md)**. Settings → **Share** shows the current URL, Copy, and a QR code. Push to `main` can auto-publish via GitHub Actions Pages (enable under repo Settings → Pages).
+Ship guide (GitHub Pages, free tiers, tunnels, why LAN install fails): **[docs/SHIP.md](docs/SHIP.md)**. Settings → **Share** shows the current URL, Copy, and a QR code. Push to `main` auto-publishes via GitHub Actions once Pages source is **GitHub Actions** (see live URL above).
 
 ## Clone starter vs copy example
 

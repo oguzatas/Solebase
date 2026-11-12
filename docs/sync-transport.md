@@ -2,6 +2,19 @@
 
 Production path for exchanging **E2EE changesets** between devices. Builds on [changeset extract + crypto](sync-changesets.md) and plugs into [Layer 1](solebase-layer1.md).
 
+## Two-device checklist
+
+Hosting is **not** sync. Same URL on two phones ≠ shared data. To sync:
+
+1. **Same `appId`** and **same `encryptionKey`** on every device (Layer 1 `Solebase.init`).
+2. Pick a path:
+   - **S3** — real bucket credentials on both devices; `syncNow()` / `autoSync` push/pull ciphertext blobs.
+   - **P2P** — `options.p2p: true`; exchange SDP via QR/clipboard (`createP2POffer` → `acceptP2POffer` → `acceptP2PAnswer`).
+   - **Drive** — config stub only today (see below); not live OAuth/Drive API yet.
+3. Success: peer decrypts, worker applies, `collection.subscribe` refreshes. Plaintext never leaves the device.
+
+App authors stay on Layer 1 (`Solebase` / `collection` / `getSync()`). Smokes under `examples/smoke-*` are eng harnesses, not product apps — see root welcome → Engineers / [SHIP.md](SHIP.md).
+
 ## Pipeline
 
 ```
@@ -61,9 +74,17 @@ await db.collection('notes').insert({ title: 'Hi' });
 await db.syncNow(); // optional manual cycle
 ```
 
-### Drive provider
+### S3 second device
 
-`provider: 'drive'` uses the **same blob interface** as S3. Live Drive API + OAuth is not wired yet; the default backend is in-memory so the config path is real for apps and smoke. Pass `memory: true` (default) or inject `blobStore`.
+1. Device A: init with S3 options + shared `appId` / `encryptionKey` → mutate → `await db.syncNow()` (or rely on `autoSync`).
+2. What lands in the bucket: **E2EE blobs only** (`packCiphertextPackage` / AES-GCM), keyed as `{prefix}/{appId}/{siteId}/{cursor}-{uuid}.changeset`.
+3. Device B: identical `appId`, `encryptionKey`, and S3 options → `syncNow()` / `autoSync` downloads unseen blobs → decrypt → `changeset_apply` → UI via `subscribe`.
+
+`memory: true` is for single-process smoke/dev only — it does **not** cross devices.
+
+### Drive provider (stub)
+
+`provider: 'drive'` uses the **same blob interface** as S3. **Live Drive API + OAuth is not wired yet**; the default backend is in-memory so the config path is real for apps and smoke. Pass `memory: true` (default) or inject `blobStore`. Do not expect Google Drive to sync two phones today.
 
 ### Incomplete S3 credentials
 
@@ -74,12 +95,18 @@ If `endpoint` / `bucket` / keys are missing and `allowMemoryFallback` is not `fa
 **Temporary assumption (zero-backend):** peers exchange SDP offer/answer out-of-band (clipboard / QR / Share URL). There is **no** Solebase signaling server.
 
 ```js
-const sync = db.getSync();
-const { payload: offerText } = await sync.createP2POffer();
-// …send offerText to peer…
-const { payload: answerText } = await peer.sync.acceptP2POffer(offerText);
-// …send answerText back…
-await sync.acceptP2PAnswer(answerText);
+// Both devices: sync: { provider: 's3', options: { p2p: true, … } }  (or memory + p2p for local)
+const syncA = dbA.getSync();
+const syncB = dbB.getSync();
+
+const { payload: offerText } = await syncA.createP2POffer();
+// …carry offerText to B (QR / clipboard)…
+
+const { payload: answerText } = await syncB.acceptP2POffer(offerText);
+// …carry answerText back to A…
+
+await syncA.acceptP2PAnswer(answerText);
+// Success: DataChannel open → encrypted changesets → decrypt/apply → subscribe
 ```
 
 Optional: inject a `signal` adapter `{ send(msg), onMessage(cb) }` via sync options / `SolebaseP2PSession` for a future lightweight relay. Smoke uses an in-memory bus (`createInMemorySignalBus`).

@@ -367,7 +367,8 @@
         <a href="#init">Init</a>
         <a href="#collection">Collection</a>
         <a href="#sync">Sync</a>
-        <a href="#links">Docs</a>
+        <a href="#try">Try</a>
+        <a href="#engineers">Engineers</a>
       </div>
     </div>
   </nav>
@@ -380,7 +381,8 @@
     </p>
     <div class="hero-cta fade-up fade-up-3">
       <a class="btn btn-primary" href="#init">Start with <code style="color:inherit">Solebase.init</code></a>
-      <a class="btn btn-ghost" href="examples/smoke-solebase/">Open Layer 1 smoke</a>
+      <a class="btn btn-ghost" href="#sync">Two-device sync</a>
+      <a class="btn btn-ghost" href="https://oguzatas.github.io/prompt2ui/">Live on GitHub Pages</a>
     </div>
   </header>
 
@@ -460,42 +462,142 @@ const stop = notes.subscribe((docs) =&gt; {
     </section>
 
     <section class="doc" id="sync" aria-labelledby="sync-title">
-      <h2 id="sync-title">Sync (high level)</h2>
+      <h2 id="sync-title">Two-device sync</h2>
       <p>
-        Optional. Pass <code>sync</code> into <code>Solebase.init</code> to exchange
-        E2EE changesets — plaintext never leaves the device.
+        Hosting is not sync. Opening the same URL on a second phone does not share data.
+        Each device keeps its own OPFS database until you configure optional E2EE sync.
+        Plaintext never leaves the device.
+      </p>
+      <p>
+        <strong>Prerequisite on every device:</strong> the same <code>appId</code> and the same
+        <code>encryptionKey</code>. Different keys → decrypt fails. Different
+        <code>appId</code> → separate blob namespaces.
+      </p>
+
+      <div class="code-block">
+        <p class="code-label">Shared identity (both devices)</p>
+        <pre><code>const db = await Solebase.init({
+  appId: 'notes',                 // same on every device
+  encryptionKey: 'shared-secret', // same passphrase / key material
+  workerUrl: new URL('./core/db-worker.js', import.meta.url),
+  sync: { /* S3 and/or P2P below */ },
+});</code></pre>
+      </div>
+
+      <h2 id="sync-s3" style="font-size:1.05rem;margin-top:1.35rem">S3 path (R2 / MinIO / AWS)</h2>
+      <p>
+        Configure a real bucket once. Device A writes → encrypted changeset blobs land in S3.
+        Device B pulls those blobs, decrypts with the shared key, applies into its OPFS DB,
+        and <code>collection.subscribe</code> refreshes.
       </p>
       <div class="code-block">
-        <p class="code-label">S3 / Drive / P2P</p>
-        <pre><code>const db = await Solebase.init({
-  appId: 'notes',
-  encryptionKey: 'shared-secret',
-  workerUrl: new URL('./core/db-worker.js', import.meta.url),
-  sync: {
-    provider: 's3', // or 'drive'
-    options: {
-      // S3: endpoint, bucket, accessKeyId, secretAccessKey, region
-      // Dev: memory: true
-      p2p: true,      // WebRTC DataChannel (manual SDP / QR)
-      autoSync: true,
-    },
+        <p class="code-label">provider: 's3'</p>
+        <pre><code>sync: {
+  provider: 's3',
+  options: {
+    endpoint: 'https://xxx.r2.cloudflarestorage.com',
+    region: 'auto',
+    bucket: 'my-bucket',
+    accessKeyId: '…',
+    secretAccessKey: '…',
+    prefix: 'solebase-changesets',
+    autoSync: true,   // debounced push/pull after local writes
+    // pollIntervalMs: 15000,
   },
-});
+},
 
-await db.syncNow();      // manual push/pull
-db.getSync();            // transport handle or null</code></pre>
+await db.syncNow(); // manual push/pull when autoSync is off</code></pre>
       </div>
+      <ul class="api-list">
+        <li><strong>What uploads:</strong> AES-GCM ciphertext packages only (packed changesets), never plaintext rows.</li>
+        <li><strong>Blob keys:</strong> <code>{prefix}/{appId}/{siteId}/{cursor}-{uuid}.changeset</code></li>
+        <li><strong>Second device:</strong> same <code>appId</code> + <code>encryptionKey</code> + S3 options → <code>syncNow()</code> (or wait for <code>autoSync</code>) downloads &amp; merges.</li>
+        <li><strong>Dev without a bucket:</strong> <code>memory: true</code> (in-process only — not cross-device).</li>
+      </ul>
+
+      <h2 id="sync-p2p" style="font-size:1.05rem;margin-top:1.35rem">P2P path (WebRTC, no server)</h2>
       <p>
-        Pipeline: local mutate → extract cr-sqlite changes → encrypt → upload blob
-        and/or WebRTC → peer decrypt → apply → <code>subscribe</code> refresh.
-        Details: <a href="docs/sync-transport.md">docs/sync-transport.md</a>,
+        Zero-backend signaling: peers exchange SDP offer/answer out-of-band (clipboard, QR, Share).
+        There is no Solebase signaling cloud.
+      </p>
+      <div class="code-block">
+        <p class="code-label">createP2POffer → acceptP2POffer → acceptP2PAnswer</p>
+        <pre><code>// Both devices: sync.options.p2p = true (with or without S3)
+const syncA = dbA.getSync();
+const syncB = dbB.getSync();
+
+const { payload: offerText } = await syncA.createP2POffer();
+// …device A → B via QR / clipboard…
+
+const { payload: answerText } = await syncB.acceptP2POffer(offerText);
+// …device B → A via QR / clipboard…
+
+await syncA.acceptP2PAnswer(answerText);
+// Success: DataChannel open; encrypted changesets flow; subscribe refreshes</code></pre>
+      </div>
+      <ul class="api-list">
+        <li>Enable with <code>options.p2p: true</code> (STUN default <code>stun:stun.l.google.com:19302</code>).</li>
+        <li>API lives on the transport from <code>db.getSync()</code> — not on the host URL.</li>
+        <li>Success looks like: handshake completes, channel <code>open</code>, peer receives ciphertext, decrypt + apply, UI updates via <code>subscribe</code>.</li>
+      </ul>
+
+      <h2 id="sync-drive" style="font-size:1.05rem;margin-top:1.35rem">Drive</h2>
+      <p>
+        <code>provider: 'drive'</code> is a <strong>stub</strong> today: same blob interface as S3, but
+        live Drive API + OAuth are not wired. Default backend is in-memory so apps and smokes
+        can exercise the config path. Do not expect cross-device Drive sync yet.
+      </p>
+      <p>
+        Full pipeline reference:
+        <a href="docs/sync-transport.md">docs/sync-transport.md</a>,
         <a href="docs/sync-changesets.md">docs/sync-changesets.md</a>.
       </p>
     </section>
 
-    <section class="doc" id="links" aria-labelledby="links-title">
-      <h2 id="links-title">Examples &amp; docs</h2>
-      <p>Smoke pages prove the stack; markdown docs are the deeper reference.</p>
+    <section class="doc" id="try" aria-labelledby="try-title">
+      <h2 id="try-title">Try &amp; docs</h2>
+      <p>
+        Real app usage: copy an example, call <code>Solebase.init</code>, ship static files.
+        Live demo (no clone):
+        <a href="https://oguzatas.github.io/prompt2ui/">oguzatas.github.io/prompt2ui</a>
+        — enable once under repo Settings → Pages → GitHub Actions if that URL 404s.
+      </p>
+      <ul class="link-grid">
+        <li>
+          <a href="examples/notes/">
+            examples/notes
+            <small>Full notes UI (legacy IndexedDB until migration)</small>
+          </a>
+        </li>
+        <li>
+          <a href="examples/calorie-tracker/">
+            examples/calorie-tracker
+            <small>Meals UI (legacy IndexedDB until migration)</small>
+          </a>
+        </li>
+        <li>
+          <a href="docs/solebase-layer1.md">docs/solebase-layer1.md</a>
+        </li>
+        <li>
+          <a href="docs/sync-transport.md">docs/sync-transport.md</a>
+        </li>
+        <li>
+          <a href="docs/SHIP.md">docs/SHIP.md</a>
+        </li>
+        <li>
+          <a href="README.md">README.md</a>
+        </li>
+      </ul>
+    </section>
+
+    <section class="doc" id="engineers" aria-labelledby="engineers-title">
+      <h2 id="engineers-title">Engineers / smoke tests</h2>
+      <p>
+        Smokes are <strong>dev harnesses</strong> that prove Layer&nbsp;1 / worker / sync paths —
+        not sample products. Prefer them while hacking the engine; app authors should stay on
+        <code>Solebase.init</code> + <code>collection</code>. Ship checklist:
+        <a href="docs/SHIP.md">docs/SHIP.md</a>.
+      </p>
       <ul class="link-grid">
         <li>
           <a href="examples/smoke-solebase/">
@@ -522,25 +624,13 @@ db.getSync();            // transport handle or null</code></pre>
           </a>
         </li>
         <li>
-          <a href="examples/notes/">
-            examples/notes
-            <small>Full notes UI (legacy IndexedDB until migration)</small>
+          <a href="examples/smoke-sync-changesets/">
+            examples/smoke-sync-changesets
+            <small>Changeset extract + crypto</small>
           </a>
         </li>
         <li>
-          <a href="docs/solebase-layer1.md">docs/solebase-layer1.md</a>
-        </li>
-        <li>
           <a href="docs/layer3-storage.md">docs/layer3-storage.md</a>
-        </li>
-        <li>
-          <a href="docs/sync-transport.md">docs/sync-transport.md</a>
-        </li>
-        <li>
-          <a href="docs/SHIP.md">docs/SHIP.md</a>
-        </li>
-        <li>
-          <a href="README.md">README.md</a>
         </li>
       </ul>
     </section>
