@@ -1,5 +1,5 @@
 # Deploy Solebase static tree to GitHub Pages (free HTTPS host).
-# Live URL: https://oguzatas.github.io/prompt2ui/
+# Live URL: https://oguzatas.github.io/Solebase/
 # Enable once: repo Settings → Pages → Build and deployment → Source: GitHub Actions.
 name: Deploy GitHub Pages
 
@@ -44,7 +44,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Relative asset URLs work under /prompt2ui/ project Pages base.
+          # Relative asset URLs work under /Solebase/ project Pages base.
           path: _site
 
       - name: Deploy to GitHub Pages

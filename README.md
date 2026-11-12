@@ -1,12 +1,12 @@
 # Solebase
 
-> **Rename note:** This product is **Solebase**. The GitHub/disk folder may still be named `prompt2ui` during migration.
+> **Rename note:** Product and GitHub repo are **Solebase** (`oguzatas/Solebase`). A local disk folder may still be named `prompt2ui`.
 
 **Cloneable · Zero-build · Local-first · E2EE** starter for personal hobby apps.
 
 One folder = one personal app. The **root** is a Solebase how-to / library welcome page. **examples/** are use-ready apps you can copy or serve alone.
 
-**Live (GitHub Pages):** [https://oguzatas.github.io/prompt2ui/](https://oguzatas.github.io/prompt2ui/) — welcome + examples without cloning. If that 404s, enable once: repo **Settings → Pages → Build and deployment → Source: GitHub Actions**, then push to `main` (workflow: [`.github/workflows/pages.yml`](.github/workflows/pages.yml)).
+**Live (GitHub Pages):** [https://oguzatas.github.io/Solebase/](https://oguzatas.github.io/Solebase/) — welcome + examples without cloning. If that 404s, enable once: **[Settings → Pages](https://github.com/oguzatas/Solebase/settings/pages)** → Build and deployment → Source: **GitHub Actions**, then push to `main` (workflow: [`.github/workflows/pages.yml`](.github/workflows/pages.yml)).
 
 No npm bundler for apps. Pure ES modules, Tailwind CDN, Web Crypto, installable PWA. The Layer 1 library is TypeScript under `packages/solebase/` (compile with `npx tsc`; browsers import `packages/solebase/dist/`).
 
@@ -44,7 +44,7 @@ Each example embeds its own `core/` copy so it runs with `python -m http.server`
 ### Blank starter (root)
 
 ```bash
-cd prompt2ui   # repo folder; product name is Solebase
+cd Solebase   # or local folder still named prompt2ui
 python -m http.server 8080
 ```
 
@@ -69,7 +69,7 @@ Use `localhost`, not `file://`.
 ## One-app-per-folder model
 
 ```
-prompt2ui/                      # Solebase how-to welcome (product: Solebase)
+Solebase/                       # how-to welcome (local folder may still be prompt2ui)
   packages/solebase/            # Layer 1 TypeScript API → dist/ ESM
   core/                         # Layer 3 engines (worker, crypto, sync)
   app/blank.js                  # optional personal-app canvas stub

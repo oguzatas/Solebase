@@ -1,4 +1,4 @@
-# Ship Prompt2UI
+# Ship Solebase
 
 How to host, install, go offline, and share — without confusing **host** with **sync**.
 
@@ -57,11 +57,11 @@ Any static host works (no Node server required). Serve over **HTTPS**.
 
 ### GitHub Pages (recommended free default)
 
-Yes — GitHub Pages works for Prompt2UI (static files + HTTPS).
+Yes — GitHub Pages works for Solebase (static files + HTTPS).
 
-1. In the repo: **Settings → Pages → Build and deployment → Source: GitHub Actions** (one click if not already set).
+1. In the repo: **[Settings → Pages](https://github.com/oguzatas/Solebase/settings/pages)** → Build and deployment → Source: **GitHub Actions** (one click if not already set).
 2. Push to `main` (this repo includes [`.github/workflows/pages.yml`](../.github/workflows/pages.yml)) or run the workflow via **Actions → Deploy GitHub Pages → Run workflow**.
-3. Live URL for this repo: **[https://oguzatas.github.io/prompt2ui/](https://oguzatas.github.io/prompt2ui/)** (Solebase welcome). Notes: `…/prompt2ui/examples/notes/`. Calorie tracker: `…/prompt2ui/examples/calorie-tracker/`.
+3. Live URL for this repo: **[https://oguzatas.github.io/Solebase/](https://oguzatas.github.io/Solebase/)** (Solebase welcome). Notes: `…/Solebase/examples/notes/`. Calorie tracker: `…/Solebase/examples/calorie-tracker/`.
 4. On each device: open that URL → optional *Add to Home Screen*. Same URL ≠ shared data — configure Solebase sync (`appId` + `encryptionKey` + S3/P2P) per [sync-transport.md](sync-transport.md).
 
 That is “automatic create on Pages”: **deploy** is automatic; **install** still needs one open per device (browser rule, not something we can bypass).
