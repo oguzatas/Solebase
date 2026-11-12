@@ -1,9 +1,9 @@
 /**
  * sync-engine.js — Debounced encrypted snapshot sync (LWW)
  *
- * Local source of truth: IndexedDB via db-api / PromptDB.
+ * Local source of truth: Solebase (OPFS + cr-sqlite) via db-api.
  * Cloud: one encrypted JSON snapshot per app (+ metadata).
- * Merge: per-record last-write-wins on `updatedAt`; tombstones for deletes.
+ * Merge: per-record last-write-wins on `updatedAt`.
  *
  * Triggers:
  *   - debounced after local writes (via db-api onChange)

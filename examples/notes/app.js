@@ -1,5 +1,5 @@
 /**
- * app.js — Notes shell (editor-first; settings drawer only)
+ * app.js — Solebase Notes shell (editor-first; settings drawer only)
  */
 
 import { mount as mountApp } from './app/notes.js';

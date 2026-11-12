@@ -188,16 +188,34 @@
   flex: 1;
   display: grid;
   place-content: center;
-  gap: 0.4rem;
+  gap: 0.35rem;
   padding: 2rem;
   text-align: center;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 35%, color-mix(in oklab, var(--accent) 10%, transparent), transparent 70%),
+    var(--bg);
+  animation: vault-empty-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes vault-empty-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+
+.vault-brand {
+  margin: 0 0 0.15rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--accent-2, #a3bfb0);
 }
 
 .vault-empty-title {
   margin: 0;
-  font-size: 1.05rem;
-  font-weight: 600;
-  letter-spacing: -0.02em;
+  font-size: 1.2rem;
+  font-weight: 650;
+  letter-spacing: -0.03em;
 }
 
 .vault-empty-copy {
@@ -795,5 +813,9 @@
   .vault-drawer,
   .context-drawer {
     transition: none;
+  }
+
+  .vault-empty {
+    animation: none !important;
   }
 }

@@ -1,66 +1,87 @@
 /**
- * db-api.js — Collections facade for Prompt2UI apps
+ * db-api.js — Solebase Layer 1 facade for the Notes example
  *
- * App code never talks to adapters, crypto, or sync directly:
+ * App code never talks to OPFS, cr-sqlite, or the worker directly:
  *
  *   import { db } from '../core/db-api.js';
- *   await db.collection('meals').add({ name, calories });
- *   db.collection('meals').subscribe((rows) => render(rows));
+ *   await db.ready();
+ *   await db.collection('notes').add({ title, body });
+ *   db.collection('notes').subscribe((rows) => render(rows));
  *
- * Local source of truth is IndexedDB (via PromptDB). SyncEngine listens
- * for writes and pushes encrypted snapshots when Settings has a remote
- * adapter + passphrase.
+ * Local source of truth: OPFS-backed cr-sqlite via Solebase.init + collection().
+ * Optional Settings sync still exports/imports collection snapshots (E2EE).
  */
 
-import { PromptDB, listCollectionNames } from './prompt-db.js';
-import { syncEngine } from './sync-engine.js';
+import { Solebase } from '../../../packages/solebase/dist/index.js';
 
-/** @type {Map<string, PromptDB>} */
-const openCollections = new Map();
+const APP_ID = 'notes';
+const DEVICE_KEY = 'solebase:notes:deviceKey';
+/** Known collections for vault export / import. */
+const KNOWN = ['notes', 'folders'];
 
-function onCollectionChange(_name) {
-  syncEngine.notifyLocalWrite();
+/** @type {import('../../../packages/solebase/dist/index.js').Solebase | null} */
+let solebase = null;
+/** @type {Promise<import('../../../packages/solebase/dist/index.js').Solebase> | null} */
+let initPromise = null;
+
+function deviceEncryptionKey() {
+  try {
+    let key = localStorage.getItem(DEVICE_KEY);
+    if (!key) {
+      key = `${crypto.randomUUID()}${crypto.randomUUID()}`;
+      localStorage.setItem(DEVICE_KEY, key);
+    }
+    return key;
+  } catch {
+    return 'solebase-notes-fallback-device-key';
+  }
 }
 
 /**
- * Ensure a collection is open and cached.
- * @param {string} name
- * @returns {Promise<PromptDB>}
+ * Start Solebase (worker + OPFS). Idempotent.
+ * @returns {Promise<import('../../../packages/solebase/dist/index.js').Solebase>}
  */
-async function ensureCollection(name) {
-  if (!name || typeof name !== 'string') {
-    throw new Error('collection name is required');
+export async function ready() {
+  if (solebase) return solebase;
+  if (!initPromise) {
+    if (!globalThis.isSecureContext) {
+      throw new Error('Solebase needs a secure context (localhost or https)');
+    }
+    if (!navigator.storage?.getDirectory) {
+      throw new Error('OPFS is not available in this browser');
+    }
+    const workerUrl = new URL('../../../core/db-worker.js', import.meta.url);
+    initPromise = Solebase.init({
+      appId: APP_ID,
+      encryptionKey: deviceEncryptionKey(),
+      workerUrl,
+    }).then((instance) => {
+      solebase = instance;
+      return instance;
+    });
   }
-  let col = openCollections.get(name);
-  if (col) {
-    await col.ready();
-    return col;
-  }
-  col = await PromptDB.open(name, { onChange: onCollectionChange });
-  openCollections.set(name, col);
-  return col;
+  return initPromise;
 }
 
 /**
- * Handle returned by db.collection(name). Lazy-opens on first use.
+ * Compatibility handle — mirrors the old PromptDB-shaped API used by notes.js
+ * and settings-panel, backed by Solebase Collection.
  */
 class CollectionHandle {
   /** @param {string} name */
   constructor(name) {
     this.name = name;
-    /** @type {PromptDB|null} */
-    this._db = null;
   }
 
-  async _ready() {
-    if (!this._db) this._db = await ensureCollection(this.name);
-    return this._db;
+  async _col() {
+    const sb = await ready();
+    return sb.collection(this.name);
   }
 
-  /** @returns {Promise<object[]>} live rows */
+  /** @returns {Promise<object[]>} */
   async get() {
-    const col = await this._ready();
-    return col.get();
+    const col = await this._col();
+    return col.find();
   }
 
   /**
@@ -68,18 +89,13 @@ class CollectionHandle {
    * @returns {Promise<object>}
    */
   async add(item) {
-    const col = await this._ready();
-    return col.add(item);
-  }
-
-  /**
-   * Replace entire collection (array of records).
-   * @param {object[]} items
-   * @returns {Promise<object[]>}
-   */
-  async set(items) {
-    const col = await this._ready();
-    return col.set(items);
+    const col = await this._col();
+    const now = Date.now();
+    const doc = {
+      ...item,
+      updatedAt: item?.updatedAt || now,
+    };
+    return col.insert(doc);
   }
 
   /**
@@ -88,24 +104,24 @@ class CollectionHandle {
    * @returns {Promise<object|null>}
    */
   async update(id, patch) {
-    const col = await this._ready();
-    return col.update(id, patch);
+    const col = await this._col();
+    return col.update(id, { ...patch, updatedAt: Date.now() });
   }
 
   /**
-   * Soft-delete (tombstone) by id.
+   * Hard-delete (Solebase has no tombstones).
    * @param {string} id
    * @returns {Promise<boolean>}
    */
   async remove(id) {
-    const col = await this._ready();
-    return col.remove(id);
+    const col = await this._col();
+    await col.delete(id);
+    return true;
   }
 
   /**
-   * Subscribe to live rows. Opens the collection if needed.
    * @param {(rows: object[]) => void} listener
-   * @returns {() => void} unsubscribe (sync; pending open is cancelled)
+   * @returns {() => void}
    */
   subscribe(listener) {
     if (typeof listener !== 'function') {
@@ -113,7 +129,7 @@ class CollectionHandle {
     }
     let unsub = null;
     let cancelled = false;
-    this._ready().then((col) => {
+    this._col().then((col) => {
       if (cancelled) return;
       unsub = col.subscribe(listener);
     });
@@ -125,20 +141,17 @@ class CollectionHandle {
 
   /** @param {string} id */
   async find(id) {
-    const col = await this._ready();
-    return col.find(id);
-  }
-
-  async clear() {
-    const col = await this._ready();
-    return col.clear();
+    const col = await this._col();
+    return col.findById(id);
   }
 }
 
 /**
- * Public db facade.
+ * Public db facade (Solebase Layer 1).
  */
 export const db = {
+  ready,
+
   /**
    * @param {string} name
    * @returns {CollectionHandle}
@@ -148,44 +161,58 @@ export const db = {
   },
 
   /**
-   * Export every known collection including tombstones (for sync / backup).
+   * Export every known collection (for Settings backup / legacy sync adapters).
    * @returns {Promise<Record<string, object[]>>}
    */
   async exportSnapshot() {
-    const names = await listCollectionNames();
-    // Include any already-open collections that might not be listed yet
-    for (const name of openCollections.keys()) names.push(name);
-    const unique = [...new Set(names)];
+    await ready();
     const out = {};
-    for (const name of unique) {
-      const col = await ensureCollection(name);
-      out[name] = col.exportAll();
+    for (const name of KNOWN) {
+      out[name] = await this.collection(name).get();
     }
     return out;
   },
 
   /**
-   * Apply a remote collections map with per-record LWW merge.
+   * Apply a remote collections map with per-record LWW on `updatedAt`.
    * @param {Record<string, object[]>} collections
    * @returns {Promise<boolean>} true if anything changed
    */
   async applyRemoteSnapshot(collections) {
     if (!collections || typeof collections !== 'object') return false;
+    await ready();
     let changed = false;
     for (const [name, items] of Object.entries(collections)) {
       if (!Array.isArray(items)) continue;
-      const col = await ensureCollection(name);
-      const result = await col.mergeLWW(items);
-      if (result.changed) changed = true;
+      const col = await this.collection(name)._col();
+      for (const item of items) {
+        if (!item || typeof item !== 'object' || typeof item.id !== 'string') continue;
+        const existing = await col.findById(item.id);
+        const remoteTs = Number(item.updatedAt) || 0;
+        if (!existing) {
+          await col.insert({ ...item, id: item.id });
+          changed = true;
+          continue;
+        }
+        const localTs = Number(existing.updatedAt) || 0;
+        if (remoteTs >= localTs) {
+          const { id, ...rest } = item;
+          await col.update(id, rest);
+          changed = true;
+        }
+      }
     }
     return changed;
   },
 
   /** @returns {Promise<string[]>} */
   async listCollections() {
-    const names = await listCollectionNames();
-    for (const name of openCollections.keys()) names.push(name);
-    return [...new Set(names)].sort();
+    return [...KNOWN];
+  },
+
+  /** Underlying Solebase instance (after ready). */
+  get solebase() {
+    return solebase;
   },
 };
 

@@ -1,13 +1,13 @@
 {
-  "name": "Notes",
-  "short_name": "Notes",
-  "description": "Local-first personal notes with folders, tags, and optional E2EE sync",
+  "name": "Solebase Notes",
+  "short_name": "Solebase",
+  "description": "Local-first Solebase Markdown vault with folders, tags, and optional E2EE sync",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0c0e11",
-  "theme_color": "#0c0e11",
+  "background_color": "#101214",
+  "theme_color": "#101214",
   "categories": ["productivity", "utilities"],
   "icons": [
     {

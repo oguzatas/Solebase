@@ -9,7 +9,7 @@
  *   async disconnect?()     → optional teardown
  *
  * Adapters:
- *   LocalOnlyAdapter      — no network; data stays in PromptDB / IndexedDB
+ *   LocalOnlyAdapter      — no network; data stays in Solebase (OPFS)
  *   GoogleDriveAdapter    — encrypted JSON in Drive appDataFolder (OAuth PKCE)
  *   WebDAVAdapter         — Nextcloud / ownCloud / NAS via HTTP Basic Auth
  *   S3CompatibleAdapter   — R2 / MinIO / AWS S3-compatible PUT/GET
@@ -133,7 +133,7 @@ export async function unwrapFromCloud(blob, passphrase) {
 
 export class LocalOnlyAdapter {
   id = 'local';
-  label = 'Local only (IndexedDB)';
+  label = 'Local only (OPFS / Solebase)';
 
   async pull() {
     return null; // local data is owned by PromptDB; nothing to pull
@@ -579,7 +579,7 @@ export function createAdapter(settings = loadSettings()) {
 /** List adapters for the Settings UI */
 export function listAdapters() {
   return [
-    { id: 'local', label: 'Local only (IndexedDB)', needs: [] },
+    { id: 'local', label: 'Local only (OPFS / Solebase)', needs: [] },
     {
       id: 'google-drive',
       label: 'Google Drive (appDataFolder)',

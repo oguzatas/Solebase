@@ -1,11 +1,13 @@
 /**
- * app/notes.js — Personal Markdown vault (editor-first, push sidebars)
+ * app/notes.js — Obsidian-like Markdown vault on Solebase Layer 1
  *
- * Collections only — never adapters or sync:
+ * Collections only — never OPFS / worker / adapters:
  *   import { db } from '../core/db-api.js';
+ *   await db.ready(); // Solebase.init → OPFS cr-sqlite
  *
- * Note shape: { title, body, folder, tags: string[], pinned?: boolean }
+ * Note shape: { title, body, folder, tags: string[], pinned?: boolean, updatedAt? }
  * Folder shape: { path: string }
+ * Rich text: CodeMirror Markdown (Yjs doc API not wired in Layer 1 yet).
  */
 
 import { basicSetup, EditorView } from 'codemirror';
@@ -104,6 +106,7 @@ function parseQuery(raw) {
  * @param {HTMLElement} root
  */
 export async function mount(root) {
+  await db.ready();
   const notes = db.collection(NOTES);
   const foldersCol = db.collection(FOLDERS);
   /** @type {string|null} */
@@ -167,7 +170,7 @@ export async function mount(root) {
 
         <aside class="vault-drawer" id="vault-drawer" aria-label="Vault" aria-hidden="false">
           <div class="drawer-head">
-            <span class="drawer-label">Notes</span>
+            <span class="drawer-label">Vault</span>
             <div class="drawer-head-actions">
               <button type="button" class="icon-btn" id="n-drawer-new" aria-label="New note" title="New note">${I.plus}</button>
               <button type="button" class="icon-btn" id="n-drawer-folder" aria-label="New folder" title="New folder">${I.folder}</button>
@@ -182,8 +185,9 @@ export async function mount(root) {
 
         <section class="vault-editor" id="n-editor" aria-label="Editor">
           <div class="vault-empty" id="n-empty">
-            <p class="vault-empty-title">No note open</p>
-            <p class="vault-empty-copy">New note with <kbd>+</kbd>, folder with the folder icon, or <kbd>Ctrl</kbd>+<kbd>P</kbd> to jump. Gear → Share for install / QR; notes stay on this device unless you enable sync.</p>
+            <p class="vault-brand">Solebase</p>
+            <p class="vault-empty-title">Your local vault</p>
+            <p class="vault-empty-copy">New note with <kbd>+</kbd>, folder with the folder icon, or <kbd>Ctrl</kbd>+<kbd>P</kbd> to jump. Data lives in OPFS via Solebase — Gear → Share for install / QR; sync stays optional.</p>
           </div>
           <div class="vault-form hidden" id="n-form">
             <div class="vault-panes" id="n-panes" data-mode="edit">

@@ -2,7 +2,7 @@
  * sw.js — Notes example service worker
  */
 
-const CACHE = 'notes-v5';
+const CACHE = 'notes-solebase-v1';
 
 const PRECACHE = [
   './',
@@ -12,7 +12,6 @@ const PRECACHE = [
   './app/markdown.js',
   './app/notes.css',
   './core/db-api.js',
-  './core/prompt-db.js',
   './core/prompt-crypto.js',
   './core/prompt-storage.js',
   './core/sync-engine.js',
