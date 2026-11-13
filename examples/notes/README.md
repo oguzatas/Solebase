@@ -34,19 +34,25 @@ Serving the example is a **static file host** only. Same URL on two phones does 
 After R2 keys + encryption key are saved on the desktop:
 
 1. Open https://solebase.pages.dev/examples/notes/ → **Settings** → **Share to another device** → **Generate bootstrap QR**
-2. Scan the QR with the phone camera (or **Copy link** and open it). No in-app scanner required — the URL carries `?bootstrap=…`.
-3. Phone applies credentials into localStorage, runs `Solebase.init` with the same `appId` / encryption key / R2 options, then is ready to sync.
+2. Scan the QR with the phone camera (or **Copy link** / **Share link**). No in-app scanner required — the URL carries `?bootstrap=…`.
+3. **Safari** applies credentials into its localStorage and shows **Add to Home Screen** guidance plus a reclaim link.
+4. Safari → Share → **Add to Home Screen** (manifest `start_url` is `./` under `/examples/notes/`).
+5. Open the Solebase Home Screen icon. iOS gives the standalone app **empty** storage — paste/open the **same** bootstrap link (banner + Settings → Import), or scan the QR again within ~20 min.
+6. After standalone import, Solebase sync is ready in the Home Screen app.
+
+**Why the second open?** iOS partitions Safari tab storage from standalone PWA storage. Credentials from the QR do not carry into Add to Home Screen automatically.
 
 **URL shapes**
 
 | Mode | Example | When |
 |------|---------|------|
-| Short R2 | `…/examples/notes/?bootstrap=r.<id>.<key>` | Encrypted JSON uploaded to public bucket `solebase-bootstrap` (TTL ~20 min; delete-after-read when possible) |
+| Short R2 | `…/examples/notes/?bootstrap=r.<id>.<key>` | Encrypted JSON on public bucket `solebase-bootstrap` (TTL ~20 min; kept until reclaim / expiry so A2HS can reuse) |
 | Compact | `…/examples/notes/?bootstrap=c.<base64url>` | Fallback when short upload is unavailable — payload fits in the QR |
 
 **Security**
 
-- Bootstrap links contain (or unlock) R2 secrets + the vault encryption key — treat like a password until expiry/consume.
+- Bootstrap links contain (or unlock) R2 secrets + the vault encryption key — treat like a password until expiry.
+- Public R2 holds **ciphertext only**; the AES key is only in the QR/URL.
 - Prefer generating on HTTPS (`solebase.pages.dev`), not localhost.
 - Never commit Access Key / Secret / encryption keys to git.
 - For short links, grant the R2 API token **Object Read & Write** on bucket `solebase-bootstrap` (same account) in addition to `solebase-sync-test`.

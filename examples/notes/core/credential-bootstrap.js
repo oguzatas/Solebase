@@ -8,10 +8,13 @@
  *      encodes only `?bootstrap=r.<id>.<key>` (TTL ~20 min). Public GET via
  *      r2.dev on the dedicated solebase-bootstrap bucket when the token can
  *      write there; otherwise fall back to compact `?bootstrap=c.<b64>`.
- *   3. Phone opens URL → consumeBootstrapToken → localStorage + Solebase.init.
- *   4. Delete-after-read when feasible (authenticated DELETE with applied keys).
+ *   3. Phone Safari opens URL → consumeBootstrapToken → localStorage + Solebase.init.
+ *      Encrypted R2 blob is kept until TTL so Add to Home Screen (separate iOS
+ *      storage partition) can reclaim the same link without retyping keys.
+ *   4. Optional delete after standalone reclaim (`deleteArtifacts: true`).
  *
  * Never commit real secrets. Credentials live in browser localStorage only.
+ * E2EE key is never stored plaintext on public R2 — only ciphertext + URL key.
  */
 
 import { encryptPayload, decryptPayload, isEncryptedEnvelope } from './prompt-crypto.js';
@@ -345,20 +348,39 @@ export async function resolveBootstrapToken(token) {
 }
 
 /**
- * Full consume: resolve → apply → delete-after-read.
+ * Full consume: resolve → apply. Defer R2 delete by default so Safari → A2HS
+ * can reclaim the same encrypted blob within TTL (separate iOS storage).
+ *
  * @param {string} token
+ * @param {{ deleteArtifacts?: boolean }} [opts]
  */
-export async function consumeBootstrapToken(token) {
+export async function consumeBootstrapToken(token, opts = {}) {
   const payload = await resolveBootstrapToken(token);
   const meta = payload._bootstrapMeta || {};
   delete payload._bootstrapMeta;
   const settings = applyBootstrapPayload(payload);
-  const deleted = await deleteBootstrapArtifacts({
-    id: meta.id,
-    objectKey: meta.objectKey,
+
+  let deleted = [];
+  // Only delete when explicitly requested (e.g. after standalone reclaim).
+  // Public blob is ciphertext; the AES key stays only in the URL token.
+  if (opts.deleteArtifacts === true) {
+    deleted = await deleteBootstrapArtifacts({
+      id: meta.id,
+      objectKey: meta.objectKey,
+      settings,
+    });
+  }
+
+  const reclaimUrl = buildBootstrapUrl(String(token || '').trim());
+  return {
     settings,
-  });
-  return { settings, payload, deleted, mode: meta.mode || 'compact' };
+    payload,
+    deleted,
+    mode: meta.mode || 'compact',
+    token: String(token || '').trim(),
+    reclaimUrl,
+    expiresAt: payload.expiresAt || null,
+  };
 }
 
 /**
@@ -371,6 +393,34 @@ export function readBootstrapParam(search = location.search) {
 }
 
 /**
+ * Accept a full bootstrap URL, `?bootstrap=…`, or a raw `r.` / `c.` token.
+ * @param {string} text
+ */
+export function extractBootstrapToken(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('r.') || raw.startsWith('c.')) return raw;
+
+  try {
+    const url = new URL(raw);
+    const fromQuery = url.searchParams.get('bootstrap');
+    if (fromQuery) return fromQuery.trim();
+  } catch {
+    /* not a full URL */
+  }
+
+  const match = raw.match(/[?&]bootstrap=([^&\s#]+)/i);
+  if (match?.[1]) {
+    try {
+      return decodeURIComponent(match[1]).trim();
+    } catch {
+      return match[1].trim();
+    }
+  }
+  return '';
+}
+
+/**
  * Strip bootstrap query from the address bar without reloading.
  */
 export function clearBootstrapParamFromUrl() {
@@ -379,4 +429,80 @@ export function clearBootstrapParamFromUrl() {
   url.searchParams.delete('bootstrap');
   const next = url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : '') + url.hash;
   history.replaceState({}, '', next);
+}
+
+/** sessionStorage key for Safari post-QR A2HS reclaim guidance (same tab only). */
+export const RECLAIM_HINT_KEY = 'solebase:notes:reclaimHint';
+
+/**
+ * Persist reclaim URL for the current browser partition (Safari guidance).
+ * Does not cross into iOS standalone PWA storage.
+ * @param {{ url: string, expiresAt?: number|null, mode?: string }} hint
+ */
+export function saveReclaimHint(hint) {
+  try {
+    sessionStorage.setItem(
+      RECLAIM_HINT_KEY,
+      JSON.stringify({
+        url: String(hint.url || ''),
+        expiresAt: hint.expiresAt || null,
+        mode: hint.mode || '',
+        savedAt: Date.now(),
+      })
+    );
+  } catch {
+    /* private mode / quota */
+  }
+}
+
+/** @returns {{ url: string, expiresAt?: number|null, mode?: string, savedAt?: number }|null} */
+export function loadReclaimHint() {
+  try {
+    const raw = sessionStorage.getItem(RECLAIM_HINT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.url) return null;
+    if (parsed.expiresAt && Date.now() > Number(parsed.expiresAt)) {
+      sessionStorage.removeItem(RECLAIM_HINT_KEY);
+      return null;
+    }
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function clearReclaimHint() {
+  try {
+    sessionStorage.removeItem(RECLAIM_HINT_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** True when running as installed PWA / home-screen web app. */
+export function isStandaloneDisplay() {
+  try {
+    if (typeof navigator !== 'undefined' && navigator.standalone === true) return true;
+  } catch {
+    /* ignore */
+  }
+  try {
+    if (window.matchMedia('(display-mode: standalone)').matches) return true;
+    if (window.matchMedia('(display-mode: fullscreen)').matches) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/**
+ * Whether this browser partition already has R2 + encryption credentials.
+ * @param {object} [settings]
+ */
+export function hasSavedSyncCredentials(settings = loadSettings()) {
+  const accessKeyId = String(settings.s3AccessKeyId || '').trim();
+  const secretAccessKey = String(settings.s3SecretAccessKey || '');
+  const enc = String(getEncryptionKey() || settings.encryptionKey || '').trim();
+  return Boolean(accessKeyId && secretAccessKey && enc);
 }

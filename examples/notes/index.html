@@ -65,10 +65,15 @@
 
     body {
       overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
     }
 
     #app {
-      height: 100%;
+      flex: 1;
+      min-height: 0;
+      height: auto;
       display: flex;
       flex-direction: column;
       min-width: 0;
@@ -327,6 +332,62 @@
       gap: 0.4rem;
     }
 
+    .device-banner {
+      flex-shrink: 0;
+      z-index: 45;
+      padding:
+        max(0.7rem, env(safe-area-inset-top, 0px))
+        max(0.85rem, env(safe-area-inset-right, 0px))
+        0.75rem
+        max(0.85rem, env(safe-area-inset-left, 0px));
+      background: color-mix(in oklab, var(--bg-elev) 88%, var(--accent) 12%);
+      border-bottom: 1px solid color-mix(in oklab, var(--accent) 28%, var(--line));
+      color: var(--text);
+    }
+
+    .device-banner[hidden] {
+      display: none !important;
+    }
+
+    .device-banner h2 {
+      margin: 0 0 0.35rem;
+      font-size: 0.92rem;
+      font-weight: 650;
+      letter-spacing: -0.015em;
+    }
+
+    .device-banner p {
+      margin: 0 0 0.55rem;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      color: var(--muted);
+    }
+
+    .device-banner ol {
+      margin: 0 0 0.65rem;
+      padding-left: 1.15rem;
+      font-size: 0.78rem;
+      line-height: 1.45;
+      color: var(--text);
+    }
+
+    .device-banner li {
+      margin-bottom: 0.25rem;
+    }
+
+    .device-banner .share-url-row {
+      margin-bottom: 0.55rem;
+    }
+
+    .device-banner .settings-actions {
+      margin-top: 0.15rem;
+    }
+
+    .device-banner--reclaim {
+      background: color-mix(in oklab, var(--bg-elev) 86%, var(--warn) 14%);
+      border-bottom-color: color-mix(in oklab, var(--warn) 35%, var(--line));
+    }
+
     #toast {
       position: fixed;
       bottom: 1.25rem;
@@ -356,6 +417,40 @@
   </style>
 </head>
 <body>
+  <div id="device-handoff-banner" class="device-banner" hidden role="region" aria-label="Add to Home Screen credential handoff">
+    <h2>Next: Add to Home Screen</h2>
+    <p id="handoff-meta">Safari and the Home Screen app do not share credentials. Keep this reclaim link until the home-screen app imports it.</p>
+    <ol>
+      <li>Safari Share → <strong>Add to Home Screen</strong> (opens <code>/examples/notes/</code>).</li>
+      <li>Open the Solebase icon, then paste/open this same bootstrap link once (or scan the desktop QR again).</li>
+    </ol>
+    <div class="share-url-row">
+      <input type="text" id="handoff-reclaim-url" readonly autocomplete="off" spellcheck="false" aria-label="Reclaim bootstrap link" />
+    </div>
+    <div class="settings-actions">
+      <button type="button" class="btn btn-primary" id="handoff-copy">Copy reclaim link</button>
+      <button type="button" class="btn btn-ghost" id="handoff-share">Share link</button>
+      <button type="button" class="btn btn-ghost" id="handoff-open-settings">Settings</button>
+      <button type="button" class="btn btn-ghost" id="handoff-dismiss">Dismiss</button>
+    </div>
+  </div>
+
+  <div id="device-reclaim-banner" class="device-banner device-banner--reclaim" hidden role="region" aria-label="Import credentials into Home Screen app">
+    <h2>Import sync credentials</h2>
+    <p>
+      This Home Screen app has empty storage (separate from Safari). Paste the bootstrap link from the desktop QR,
+      or open Settings → Share to another device.
+    </p>
+    <label class="settings-field" style="margin-bottom:0.45rem">
+      <span>Bootstrap link or token</span>
+      <input type="text" id="reclaim-paste" autocomplete="off" spellcheck="false" placeholder="https://solebase.pages.dev/examples/notes/?bootstrap=…" />
+    </label>
+    <div class="settings-actions">
+      <button type="button" class="btn btn-primary" id="reclaim-import">Import credentials</button>
+      <button type="button" class="btn btn-ghost" id="reclaim-open-settings">Open Settings</button>
+    </div>
+  </div>
+
   <div id="app">
     <main id="main-pane" tabindex="-1"></main>
   </div>
@@ -390,13 +485,19 @@
 
         <h3 style="margin-top:1.1rem">Share to another device</h3>
         <p class="settings-hint">
-          One-time QR / link that copies R2 credentials + encryption key into the other device’s localStorage and starts Solebase sync.
-          Prefer short-lived R2 blob (~20 min TTL, delete-after-read). Requires Save’d R2 keys on this desktop first.
+          Short-lived QR / link that copies R2 credentials + encryption key into another browser’s localStorage and starts Solebase sync.
+          Encrypted blob on R2 (~20 min TTL); the encryption key stays only in the QR/URL — never plaintext on public R2.
+          Requires Saved R2 keys on this desktop first.
         </p>
-        <p id="cfg-bootstrap-status">Generates a short-lived link that fills R2 credentials + encryption key on another device.</p>
+        <p class="settings-hint">
+          <strong>iPhone flow:</strong> scan QR → opens Safari → credentials save in Safari → Share → <strong>Add to Home Screen</strong>
+          → open the Solebase icon → paste/open the <em>same</em> bootstrap link once (or scan again). Safari and the Home Screen app use separate storage.
+        </p>
+        <p id="cfg-bootstrap-status">Short-lived encrypted link (~20 min). Phone Safari imports first; then open the same link once in the Home Screen app.</p>
         <div class="settings-actions" style="margin-bottom:0.55rem">
           <button type="button" class="btn btn-primary" id="cfg-bootstrap-generate">Generate bootstrap QR</button>
           <button type="button" class="btn btn-ghost" id="cfg-bootstrap-copy">Copy link</button>
+          <button type="button" class="btn btn-ghost" id="cfg-bootstrap-share">Share link</button>
         </div>
         <label class="settings-field">
           <span>Bootstrap link</span>
@@ -407,9 +508,17 @@
         <div class="share-qr-wrap">
           <canvas id="cfg-bootstrap-qr" width="168" height="168" role="img" aria-label="QR code for credential bootstrap"></canvas>
         </div>
+        <label class="settings-field">
+          <span>Import bootstrap on this device</span>
+          <div class="share-url-row">
+            <input type="text" id="cfg-bootstrap-paste" autocomplete="off" spellcheck="false" placeholder="Paste bootstrap URL or token" />
+            <button type="button" class="btn btn-ghost" id="cfg-bootstrap-import">Import</button>
+          </div>
+        </label>
         <ul class="settings-tips">
           <li>On the phone: scan the QR (or open the link) — no need to re-type keys. Camera scan in-app is optional; the URL is enough.</li>
-          <li>Treat the link like a password until it expires or is consumed.</li>
+          <li>After Safari import, Add to Home Screen, then reclaim with the same link in the home-screen app (empty PWA shows an Import banner).</li>
+          <li>Treat the link like a password until it expires (~20 min). Ciphertext may remain on R2 until then so reclaim works.</li>
           <li id="cfg-bootstrap-localhost-tip" hidden>Generate this QR on the deployed HTTPS origin (solebase.pages.dev), not localhost, so the phone can open it.</li>
         </ul>
       </section>

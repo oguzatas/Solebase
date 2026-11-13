@@ -10,7 +10,12 @@ import {
   saveSettingsPreservingSecrets,
 } from './prompt-storage.js';
 import { db, R2_DEFAULTS } from './db-api.js';
-import { createBootstrapShare } from './credential-bootstrap.js';
+import {
+  createBootstrapShare,
+  extractBootstrapToken,
+  consumeBootstrapToken,
+  isStandaloneDisplay,
+} from './credential-bootstrap.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -48,11 +53,20 @@ export function initSettingsPanel(opts = {}) {
   const drawer = $('#settings-drawer');
   const backdrop = $('#settings-backdrop');
 
-  function openSettings() {
+  /**
+   * @param {{ focus?: 'bootstrap' | 'share' | 'sync' }} [openOpts]
+   */
+  function openSettings(openOpts = {}) {
     paintSettingsForm();
     drawer.classList.add('open');
     backdrop.classList.add('open');
     drawer.setAttribute('aria-hidden', 'false');
+    if (openOpts.focus === 'bootstrap') {
+      const section = $('#cfg-share-section');
+      const paste = $('#cfg-bootstrap-paste');
+      section?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      setTimeout(() => paste?.focus(), 280);
+    }
   }
 
   function closeSettings() {
@@ -204,6 +218,65 @@ export function initSettingsPanel(opts = {}) {
     }
   });
 
+  $('#cfg-bootstrap-share')?.addEventListener('click', async () => {
+    const url = $('#cfg-bootstrap-url')?.value;
+    if (!url) {
+      toastFn('Generate a bootstrap link first', 'info');
+      return;
+    }
+    try {
+      if (typeof navigator.share === 'function') {
+        await navigator.share({
+          title: 'Solebase Notes bootstrap',
+          text: 'Open once to import Solebase sync credentials. On iPhone: after Safari opens, Add to Home Screen, then open this same link in the Home Screen app.',
+          url,
+        });
+        toastFn('Bootstrap link shared', 'ok');
+        return;
+      }
+      await navigator.clipboard.writeText(url);
+      toastFn('Bootstrap URL copied (Share unavailable)', 'ok');
+    } catch (err) {
+      if (err?.name === 'AbortError') return;
+      toastFn(err.message || 'Could not share bootstrap link', 'err');
+    }
+  });
+
+  $('#cfg-bootstrap-import')?.addEventListener('click', async () => {
+    const pasted = $('#cfg-bootstrap-paste')?.value || '';
+    const token = extractBootstrapToken(pasted);
+    if (!token) {
+      toastFn('Paste a bootstrap URL or r./c. token from the desktop QR', 'info');
+      return;
+    }
+    try {
+      toastFn('Importing bootstrap credentials…', 'info');
+      await consumeBootstrapToken(token, {
+        deleteArtifacts: isStandaloneDisplay(),
+      });
+      await db.reconfigure();
+      paintSettingsForm();
+      if ($('#cfg-bootstrap-paste')) $('#cfg-bootstrap-paste').value = '';
+      toastFn('Credentials imported — Solebase sync ready', 'ok');
+      if (db.hasSolebaseSync()) {
+        try {
+          const sync = await db.syncNow('bootstrap-paste');
+          if (sync?.ok === false) {
+            toastFn(sync.detail || sync.error || 'Sync failed after import', 'err');
+          } else if (sync?.reason !== 'idle') {
+            toastFn('Synced with Solebase (R2)', 'ok');
+          }
+        } catch (err) {
+          toastFn(err?.message || 'Sync failed after import', 'err');
+        }
+      }
+      opts.onImported?.();
+      closeSettings();
+    } catch (err) {
+      toastFn(err.message || 'Bootstrap import failed', 'err');
+    }
+  });
+
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeSettings();
   });
@@ -306,7 +379,7 @@ function paintBootstrapPanelIdle() {
   if (urlInput && !urlInput.dataset.live) urlInput.value = '';
   if (status && !status.dataset.live) {
     status.textContent =
-      'Generates a short-lived link that fills R2 credentials + encryption key on another device.';
+      'Short-lived encrypted link (~20 min). Phone Safari imports first; then open the same link once in the Home Screen app (iOS keeps those storages separate).';
   }
   if (canvas && !canvas.dataset.live) {
     const ctx = canvas.getContext('2d');
@@ -354,8 +427,8 @@ async function paintBootstrapShare(opts = {}) {
   const mins = Math.round((share.expiresAt - Date.now()) / 60000);
   const modeHint =
     share.mode === 'r2'
-      ? `Short link (R2 one-time id). Expires in ~${mins || 1} min; deleted after first successful open when possible.`
-      : `Compact payload in URL (R2 short-upload unavailable). Expires in ~${mins || 1} min.`;
+      ? `Short link (encrypted R2 blob). Expires in ~${mins || 1} min — keep until Home Screen app imports (Safari ≠ standalone storage). Key stays only in the URL.`
+      : `Compact payload in URL (R2 short-upload unavailable). Expires in ~${mins || 1} min. Re-open the same link in the Home Screen app after Add to Home Screen.`;
 
   if (status) {
     status.textContent = modeHint;
