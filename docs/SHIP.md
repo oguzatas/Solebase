@@ -68,9 +68,9 @@ That is “automatic create on Pages”: **deploy** is automatic; **install** st
 
 ### Cloudflare Pages
 
-1. [Create a Pages project](https://developers.cloudflare.com/pages/get-started/git-integration/) from the repo (or upload a folder).
-2. Build command: empty. Output: `/` (or an example folder if that folder is the project root).
-3. Publish → `https://….pages.dev`.
+1. [Create a Pages project](https://developers.cloudflare.com/pages/get-started/git-integration/) from the repo (or upload a folder). Direct upload used for phone testing: `npx wrangler pages deploy <dir> --project-name=solebase` (exclude `.git` / `node_modules`).
+2. Build command: empty. Output: `/` (repo root — serves welcome + `examples/` + `packages/solebase/dist` + `core/`).
+3. Live: **[https://solebase.pages.dev/](https://solebase.pages.dev/)**. Notes: [https://solebase.pages.dev/examples/notes/](https://solebase.pages.dev/examples/notes/). Add that origin to R2 bucket CORS (`solebase-sync-test`) alongside localhost / GitHub Pages.
 
 ### Netlify
 

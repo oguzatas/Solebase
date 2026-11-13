@@ -6,7 +6,9 @@
 
 One folder = one personal app. The **root** is a Solebase how-to / library welcome page. **examples/** are use-ready apps you can copy or serve alone.
 
-**Live (GitHub Pages):** [https://oguzatas.github.io/Solebase/](https://oguzatas.github.io/Solebase/) — welcome + examples without cloning. If that 404s, enable once: **[Settings → Pages](https://github.com/oguzatas/Solebase/settings/pages)** → Build and deployment → Source: **GitHub Actions**, then push to `main` (workflow: [`.github/workflows/pages.yml`](.github/workflows/pages.yml)).
+**Live (Cloudflare Pages):** [https://solebase.pages.dev/](https://solebase.pages.dev/) — welcome + examples (phone-friendly HTTPS). Notes: [https://solebase.pages.dev/examples/notes/](https://solebase.pages.dev/examples/notes/).
+
+**Live (GitHub Pages):** [https://oguzatas.github.io/Solebase/](https://oguzatas.github.io/Solebase/) — same static tree. If that 404s, enable once: **[Settings → Pages](https://github.com/oguzatas/Solebase/settings/pages)** → Build and deployment → Source: **GitHub Actions**, then push to `main` (workflow: [`.github/workflows/pages.yml`](.github/workflows/pages.yml)).
 
 No npm bundler for apps. Pure ES modules, Tailwind CDN, Web Crypto, installable PWA. The Layer 1 library is TypeScript under `packages/solebase/` (compile with `npx tsc`; browsers import `packages/solebase/dist/`).
 

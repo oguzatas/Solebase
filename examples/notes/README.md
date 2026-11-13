@@ -42,11 +42,11 @@ MCP OAuth cannot create R2 S3 API tokens (needs **API Tokens Write**). Create on
 3. Apply to bucket **`solebase-sync-test`**
 4. Copy **Access Key ID** + **Secret Access Key**
 
-CORS on `solebase-sync-test` already allows `http://127.0.0.1:8080`, `http://localhost:8080`, and `https://oguzatas.github.io`.
+CORS on `solebase-sync-test` already allows `http://127.0.0.1:8080`, `http://localhost:8080`, `https://oguzatas.github.io`, and `https://solebase.pages.dev` (phone / HTTPS testing).
 
 ### Paste into Notes Settings
 
-1. Open http://127.0.0.1:8080/examples/notes/ → **Settings** (gear)
+1. Open https://solebase.pages.dev/examples/notes/ (or http://127.0.0.1:8080/examples/notes/) → **Settings** (gear)
 2. Prefills: endpoint `https://7701962a7c1ef34d73878ef8650ef733.r2.cloudflarestorage.com`, bucket `solebase-sync-test`, region `auto`
 3. Paste Access Key ID + Secret (browser localStorage only — never commit)
 4. Reuse the same **encryption key** + `appId: 'notes'` on every device
