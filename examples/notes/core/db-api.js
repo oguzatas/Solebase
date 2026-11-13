@@ -14,10 +14,12 @@
  */
 
 import { Solebase } from '../../../packages/solebase/dist/index.js';
-import { loadSettings } from './prompt-storage.js';
+import { loadSettings, saveSettings } from './prompt-storage.js';
 
 const APP_ID = 'notes';
-const DEVICE_KEY = 'solebase:notes:deviceKey';
+/** localStorage key for Solebase E2EE encryptionKey (do not regenerate if present). */
+export const ENCRYPTION_KEY_STORAGE = 'solebase:notes:deviceKey';
+const DEVICE_KEY = ENCRYPTION_KEY_STORAGE;
 /** Known collections for vault export / import. */
 const KNOWN = ['notes', 'folders'];
 
@@ -42,14 +44,26 @@ export function getAppId() {
 
 /**
  * Device / shared encryption key (localStorage). Same key required on every device.
+ * Never regenerates when a key already exists (DEVICE_KEY or settings.encryptionKey).
  * @returns {string}
  */
 export function getEncryptionKey() {
   try {
     let key = localStorage.getItem(DEVICE_KEY);
-    if (!key) {
-      key = `${crypto.randomUUID()}${crypto.randomUUID()}`;
-      localStorage.setItem(DEVICE_KEY, key);
+    if (key && key.trim()) return key.trim();
+
+    const fromSettings = String(loadSettings().encryptionKey || '').trim();
+    if (fromSettings) {
+      localStorage.setItem(DEVICE_KEY, fromSettings);
+      return fromSettings;
+    }
+
+    key = `${crypto.randomUUID()}${crypto.randomUUID()}`;
+    localStorage.setItem(DEVICE_KEY, key);
+    try {
+      saveSettings({ encryptionKey: key });
+    } catch {
+      /* settings mirror is best-effort */
     }
     return key;
   } catch {
@@ -65,6 +79,11 @@ export function setEncryptionKey(key) {
   const trimmed = String(key || '').trim();
   if (!trimmed) throw new Error('encryptionKey must be a non-empty string');
   localStorage.setItem(DEVICE_KEY, trimmed);
+  try {
+    saveSettings({ encryptionKey: trimmed });
+  } catch {
+    /* settings mirror is best-effort */
+  }
   return trimmed;
 }
 
@@ -289,6 +308,7 @@ export const db = {
   setEncryptionKey,
   buildS3SyncConfig,
   R2_DEFAULTS,
+  ENCRYPTION_KEY_STORAGE,
 
   /**
    * @param {string} name

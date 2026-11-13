@@ -11,7 +11,7 @@
 import { encryptPayload, decryptPayload } from './prompt-crypto.js';
 import {
   loadSettings,
-  saveSettings,
+  saveSettingsPreservingSecrets,
   createAdapter,
   listAdapters,
 } from './prompt-storage.js';
@@ -24,8 +24,22 @@ const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 /** CDN QR lib (zero-build). Loaded once on first Share paint. */
 const QR_MODULE_URL = 'https://esm.sh/qrcode@1.5.4';
 
-/** @type {string} session-only passphrase */
+const SAVED_SECRET_PLACEHOLDER = '•••••••• (saved on this device)';
+
+/** @type {string} in-memory passphrase (restored from localStorage when remembered) */
 let sessionPassphrase = '';
+
+/** Restore remembered passphrase into session memory once at module load. */
+(function hydrateRememberedSecrets() {
+  try {
+    const s = loadSettings();
+    if (s.rememberOnDevice !== false && s.passphrase) {
+      sessionPassphrase = s.passphrase;
+    }
+  } catch {
+    /* ignore */
+  }
+})();
 
 /** @type {(msg: string, type?: string) => void} */
 let toastFn = (msg) => console.log('[settings]', msg);
@@ -106,7 +120,8 @@ export function initSettingsPanel(opts = {}) {
     try {
       readSettingsFromForm();
       await db.reconfigure();
-      toastFn('Settings saved', 'ok');
+      paintSettingsForm();
+      toastFn('Settings saved on this device', 'ok');
       await updateSyncStatus();
       if (db.hasSolebaseSync() && db.solebase?.getSync()) {
         const result = await db.syncNow('settings-save');
@@ -246,6 +261,21 @@ export function initSettingsPanel(opts = {}) {
   return { openSettings, closeSettings, getSessionPassphrase };
 }
 
+/**
+ * Paint a secret input: leave value blank, show masked placeholder when saved.
+ * Saved value stays in localStorage and is applied on Save without re-typing.
+ * @param {string} sel
+ * @param {string} saved
+ * @param {string} emptyPlaceholder
+ */
+function paintSecretField(sel, saved, emptyPlaceholder) {
+  const el = $(sel);
+  if (!el) return;
+  el.value = '';
+  el.placeholder = saved ? SAVED_SECRET_PLACEHOLDER : emptyPlaceholder;
+  el.dataset.hasSaved = saved ? '1' : '0';
+}
+
 function paintSettingsForm() {
   const s = loadSettings();
   const adapterSelect = $('#cfg-adapter');
@@ -255,21 +285,28 @@ function paintSettingsForm() {
     .map((a) => `<option value="${a.id}" ${s.adapter === a.id ? 'selected' : ''}>${a.label}</option>`)
     .join('');
 
-  $('#cfg-passphrase').value = sessionPassphrase;
+  if (s.rememberOnDevice !== false && s.passphrase && !sessionPassphrase) {
+    sessionPassphrase = s.passphrase;
+  }
+
+  paintSecretField('#cfg-passphrase', sessionPassphrase || s.passphrase, 'Required for legacy cloud sync');
   $('#cfg-encryption-key').value = db.getEncryptionKey();
   $('#cfg-google-client').value = s.googleClientId || '';
   $('#cfg-webdav-url').value = s.webdavUrl || '';
   $('#cfg-webdav-user').value = s.webdavUsername || '';
-  $('#cfg-webdav-pass').value = s.webdavPassword || '';
+  paintSecretField('#cfg-webdav-pass', s.webdavPassword, 'Password / app password');
   $('#cfg-s3-endpoint').value = s.s3Endpoint || R2_DEFAULTS.endpoint;
   $('#cfg-s3-region').value = s.s3Region || R2_DEFAULTS.region;
   $('#cfg-s3-bucket').value = s.s3Bucket || R2_DEFAULTS.bucket;
   $('#cfg-s3-key').value = s.s3AccessKeyId || '';
-  $('#cfg-s3-secret').value = s.s3SecretAccessKey || '';
+  paintSecretField('#cfg-s3-secret', s.s3SecretAccessKey, 'Paste R2 secret access key');
   $('#cfg-s3-prefix').value = s.s3Prefix || R2_DEFAULTS.prefix;
   $('#cfg-s3-object').value = s.s3ObjectKey || 'prompt2ui-vault.json';
   if ($('#cfg-solebase-autosync')) {
     $('#cfg-solebase-autosync').checked = s.solebaseAutoSync !== false;
+  }
+  if ($('#cfg-remember-device')) {
+    $('#cfg-remember-device').checked = s.rememberOnDevice !== false;
   }
 
   updateAdapterPanels(s.adapter);
@@ -363,7 +400,20 @@ async function updateSyncStatus() {
 }
 
 function readSettingsFromForm() {
-  sessionPassphrase = $('#cfg-passphrase')?.value || '';
+  const prev = loadSettings();
+  const rememberOnDevice = $('#cfg-remember-device')
+    ? $('#cfg-remember-device').checked
+    : prev.rememberOnDevice !== false;
+
+  const passphraseTyped = $('#cfg-passphrase')?.value || '';
+  if (passphraseTyped) {
+    sessionPassphrase = passphraseTyped;
+  } else if (rememberOnDevice && prev.passphrase) {
+    sessionPassphrase = prev.passphrase;
+  } else if (!rememberOnDevice) {
+    sessionPassphrase = passphraseTyped;
+  }
+
   const encKey = $('#cfg-encryption-key')?.value?.trim();
   if (encKey) {
     try {
@@ -372,24 +422,32 @@ function readSettingsFromForm() {
       toastFn(err.message, 'err');
     }
   }
-  return saveSettings({
-    adapter: $('#cfg-adapter')?.value || 'local',
-    passphraseSet: Boolean(sessionPassphrase),
-    googleClientId: $('#cfg-google-client')?.value.trim() || '',
-    webdavUrl: $('#cfg-webdav-url')?.value.trim() || '',
-    webdavUsername: $('#cfg-webdav-user')?.value.trim() || '',
-    webdavPassword: $('#cfg-webdav-pass')?.value || '',
-    s3Endpoint: $('#cfg-s3-endpoint')?.value.trim() || R2_DEFAULTS.endpoint,
-    s3Region: $('#cfg-s3-region')?.value.trim() || R2_DEFAULTS.region,
-    s3Bucket: $('#cfg-s3-bucket')?.value.trim() || R2_DEFAULTS.bucket,
-    s3AccessKeyId: $('#cfg-s3-key')?.value.trim() || '',
-    s3SecretAccessKey: $('#cfg-s3-secret')?.value || '',
-    s3Prefix: $('#cfg-s3-prefix')?.value.trim() || R2_DEFAULTS.prefix,
-    s3ObjectKey: $('#cfg-s3-object')?.value.trim() || 'prompt2ui-vault.json',
-    solebaseAutoSync: $('#cfg-solebase-autosync')
-      ? $('#cfg-solebase-autosync').checked
-      : true,
-  });
+
+  return saveSettingsPreservingSecrets(
+    {
+      adapter: $('#cfg-adapter')?.value || 'local',
+      rememberOnDevice,
+      passphrase: rememberOnDevice ? sessionPassphrase : '',
+      passphraseSet: Boolean(sessionPassphrase),
+      encryptionKey: encKey || prev.encryptionKey || db.getEncryptionKey(),
+      googleClientId: $('#cfg-google-client')?.value.trim() || '',
+      webdavUrl: $('#cfg-webdav-url')?.value.trim() || '',
+      webdavUsername: $('#cfg-webdav-user')?.value.trim() || '',
+      // Blank secret inputs mean "keep saved" when remembering; otherwise clear.
+      webdavPassword: $('#cfg-webdav-pass')?.value || (rememberOnDevice ? '' : ''),
+      s3Endpoint: $('#cfg-s3-endpoint')?.value.trim() || R2_DEFAULTS.endpoint,
+      s3Region: $('#cfg-s3-region')?.value.trim() || R2_DEFAULTS.region,
+      s3Bucket: $('#cfg-s3-bucket')?.value.trim() || R2_DEFAULTS.bucket,
+      s3AccessKeyId: $('#cfg-s3-key')?.value.trim() || '',
+      s3SecretAccessKey: $('#cfg-s3-secret')?.value || '',
+      s3Prefix: $('#cfg-s3-prefix')?.value.trim() || R2_DEFAULTS.prefix,
+      s3ObjectKey: $('#cfg-s3-object')?.value.trim() || 'prompt2ui-vault.json',
+      solebaseAutoSync: $('#cfg-solebase-autosync')
+        ? $('#cfg-solebase-autosync').checked
+        : true,
+    },
+    { preserveSecrets: rememberOnDevice }
+  );
 }
 
 async function exportVault() {

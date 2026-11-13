@@ -20,8 +20,12 @@
 
 import { encryptPayload, decryptPayload, isEncryptedEnvelope } from './prompt-crypto.js';
 
-const SETTINGS_KEY = 'prompt2ui:settings';
-const DEVICE_KEY = 'prompt2ui:deviceId';
+/** localStorage key for Settings JSON (R2 creds, passphrase when remembered, etc.). */
+export const SETTINGS_KEY = 'prompt2ui:settings';
+/** localStorage key for stable device id (snapshot metadata). */
+export const DEVICE_ID_KEY = 'prompt2ui:deviceId';
+/** @deprecated use DEVICE_ID_KEY */
+const DEVICE_KEY = DEVICE_ID_KEY;
 const CLOUD_BLOB_NAME = 'prompt2ui-vault.json';
 export const SCHEMA_VERSION = 1;
 
@@ -42,11 +46,46 @@ export function saveSettings(partial) {
   return next;
 }
 
+/**
+ * Merge Settings from the form without wiping saved secrets when password
+ * inputs are left blank (masked placeholders / browser cleared fields).
+ * @param {object} partial
+ * @param {{ preserveSecrets?: boolean }} [opts]
+ */
+export function saveSettingsPreservingSecrets(partial, opts = {}) {
+  const prev = loadSettings();
+  const preserve = opts.preserveSecrets !== false && prev.rememberOnDevice !== false;
+  const next = { ...partial };
+  if (preserve) {
+    if (!String(next.s3AccessKeyId || '').trim() && prev.s3AccessKeyId) {
+      next.s3AccessKeyId = prev.s3AccessKeyId;
+    }
+    if (!String(next.s3SecretAccessKey || '') && prev.s3SecretAccessKey) {
+      next.s3SecretAccessKey = prev.s3SecretAccessKey;
+    }
+    if (!String(next.webdavPassword || '') && prev.webdavPassword) {
+      next.webdavPassword = prev.webdavPassword;
+    }
+    if (!String(next.passphrase || '') && prev.passphrase) {
+      next.passphrase = prev.passphrase;
+    }
+    if (!String(next.encryptionKey || '').trim() && prev.encryptionKey) {
+      next.encryptionKey = prev.encryptionKey;
+    }
+  }
+  return saveSettings(next);
+}
+
 export function defaultSettings() {
   return {
     adapter: 'local',
-    passphrase: '', // held in memory preference only — user re-enters; we store a flag
+    /** When true, persist passphrase + R2 secrets on this device (localStorage). */
+    rememberOnDevice: true,
+    /** Legacy snapshot E2EE passphrase — stored only when rememberOnDevice. */
+    passphrase: '',
     passphraseSet: false,
+    /** Optional mirror of Solebase encryptionKey (also in solebase:notes:deviceKey). */
+    encryptionKey: '',
     // Google Drive OAuth (create at https://console.cloud.google.com/)
     googleClientId: '', // e.g. "123456789-xxxx.apps.googleusercontent.com"
     googleAccessToken: '',

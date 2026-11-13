@@ -434,6 +434,14 @@
           <input type="checkbox" id="cfg-solebase-autosync" checked />
           <span style="margin:0">autoSync after local writes</span>
         </label>
+        <label class="settings-field" style="flex-direction:row;align-items:center;gap:0.5rem">
+          <input type="checkbox" id="cfg-remember-device" checked />
+          <span style="margin:0">Remember credentials on this device</span>
+        </label>
+        <p class="settings-hint">
+          Save once — encryption key, Access Key ID, secret, endpoint, bucket, region, and prefix restore from localStorage after refresh.
+          Secret fields show a masked placeholder; leave them blank to keep the saved value.
+        </p>
         <div class="settings-actions">
           <button type="button" class="btn btn-primary" id="cfg-save">Save settings</button>
           <button type="button" class="btn btn-ghost" id="cfg-solebase-sync-now">Sync Now</button>

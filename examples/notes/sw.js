@@ -2,7 +2,7 @@
  * sw.js — Notes example service worker
  */
 
-const CACHE = 'notes-solebase-v2';
+const CACHE = 'notes-solebase-v3';
 
 const PRECACHE = [
   './',
