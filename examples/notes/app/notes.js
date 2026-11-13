@@ -128,16 +128,16 @@ export async function mount(root) {
   /** @type {EditorView|null} */
   let cmView = null;
   let applyingDoc = false;
-  let vaultOpen = true;
+  let vaultOpen = false;
   let contextOpen = false;
   /** @type {{ kind: 'note'|'folder'|'blank', id?: string, path?: string } | null} */
   let menuTarget = null;
 
   root.innerHTML = `
-    <div class="vault vault-open" data-app="notes">
+    <div class="vault" data-app="notes">
       <header class="vault-bar" role="toolbar" aria-label="Notes">
         <div class="vault-bar-left">
-          <button type="button" class="icon-btn" id="n-toggle-vault" aria-label="Notes list" title="Notes list" aria-expanded="true">${I.menu}</button>
+          <button type="button" class="icon-btn" id="n-toggle-vault" aria-label="Notes list" title="Notes list" aria-expanded="false">${I.menu}</button>
           <button type="button" class="icon-btn" id="n-new" aria-label="New note" title="New note (Ctrl/Cmd+N)">${I.plus}</button>
           <button type="button" class="icon-btn bar-desktop" id="n-new-folder" aria-label="New folder" title="New folder">${I.folder}</button>
           <button type="button" class="icon-btn bar-desktop" id="n-daily" aria-label="Daily note" title="Today’s note">${I.calendar}</button>
@@ -181,8 +181,9 @@ export async function mount(root) {
 
       <div class="vault-stage">
         <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+        <div class="vault-edge-pull" id="vault-edge-pull" aria-hidden="true"></div>
 
-        <aside class="vault-drawer" id="vault-drawer" aria-label="Vault" aria-hidden="false">
+        <aside class="vault-drawer" id="vault-drawer" aria-label="Vault" aria-hidden="true">
           <div class="drawer-head">
             <span class="drawer-label">Vault</span>
             <div class="drawer-head-actions">
@@ -272,6 +273,7 @@ export async function mount(root) {
   const vaultDrawer = root.querySelector('#vault-drawer');
   const contextDrawer = root.querySelector('#context-drawer');
   const drawerBackdrop = root.querySelector('#drawer-backdrop');
+  const vaultEdgePull = root.querySelector('#vault-edge-pull');
   const toggleVaultBtn = root.querySelector('#n-toggle-vault');
   const toggleContextBtn = root.querySelector('#n-toggle-context');
   const switcherEl = root.querySelector('#switcher');
@@ -557,6 +559,121 @@ export async function mount(root) {
   function syncBackdrop() {
     // Backdrop only for overlay mode on small screens
     drawerBackdrop.hidden = !(isMobile() && (vaultOpen || contextOpen));
+    drawerBackdrop.style.opacity = '';
+  }
+
+  function drawerWidth() {
+    return vaultDrawer.getBoundingClientRect().width || Math.min(280, window.innerWidth * 0.88);
+  }
+
+  function clearVaultDragStyles() {
+    vaultDrawer.style.transition = '';
+    vaultDrawer.style.transform = '';
+    drawerBackdrop.style.opacity = '';
+    drawerBackdrop.style.transition = '';
+  }
+
+  /** Mobile edge-pull / swipe to open·close the vault overlay drawer. */
+  function bindVaultSwipe() {
+    const EDGE_PX = 28;
+    const OPEN_PX = 52;
+    const CLOSE_PX = 52;
+    /** @type {'open'|'close'|null} */
+    let mode = null;
+    let startX = 0;
+    let startY = 0;
+    let dragging = false;
+    let lastDx = 0;
+
+    function settingsOpen() {
+      return document.getElementById('settings-drawer')?.classList.contains('open');
+    }
+
+    function onStart(e) {
+      if (!isMobile() || e.touches.length !== 1 || settingsOpen() || contextOpen) return;
+      const t = e.touches[0];
+      startX = t.clientX;
+      startY = t.clientY;
+      lastDx = 0;
+      dragging = false;
+      mode = null;
+
+      const target = e.target instanceof Element ? e.target : null;
+      if (!vaultOpen && (startX <= EDGE_PX || target === vaultEdgePull || vaultEdgePull.contains(target))) {
+        mode = 'open';
+        return;
+      }
+      if (vaultOpen && target && (vaultDrawer.contains(target) || target === drawerBackdrop)) {
+        mode = 'close';
+      }
+    }
+
+    function onMove(e) {
+      if (!mode || !isMobile()) return;
+      const t = e.touches[0];
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      if (!dragging) {
+        if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+        if (Math.abs(dy) > Math.abs(dx)) {
+          mode = null;
+          return;
+        }
+        dragging = true;
+        vaultDrawer.style.transition = 'none';
+        drawerBackdrop.style.transition = 'none';
+        if (mode === 'open') {
+          drawerBackdrop.hidden = false;
+          drawerBackdrop.style.opacity = '0';
+        }
+      }
+      e.preventDefault();
+      const w = drawerWidth();
+      if (mode === 'open') {
+        const x = Math.max(0, Math.min(w, dx));
+        lastDx = x;
+        vaultDrawer.style.transform = `translateX(${x - w}px)`;
+        drawerBackdrop.style.opacity = String(x / w);
+      } else {
+        const x = Math.max(-w, Math.min(0, dx));
+        lastDx = x;
+        vaultDrawer.style.transform = `translateX(${x}px)`;
+        drawerBackdrop.style.opacity = String(Math.max(0, 1 + x / w));
+      }
+    }
+
+    function onEnd() {
+      if (!mode) return;
+      const m = mode;
+      const dx = lastDx;
+      const wasDragging = dragging;
+      mode = null;
+      dragging = false;
+      if (!wasDragging) {
+        clearVaultDragStyles();
+        return;
+      }
+      if (m === 'open') {
+        if (dx > OPEN_PX) {
+          clearVaultDragStyles();
+          setVaultOpen(true);
+        } else {
+          clearVaultDragStyles();
+          setVaultOpen(false);
+        }
+      } else if (dx < -CLOSE_PX) {
+        clearVaultDragStyles();
+        setVaultOpen(false);
+      } else {
+        clearVaultDragStyles();
+        setVaultOpen(true);
+      }
+    }
+
+    vaultEl.addEventListener('touchstart', onStart, { passive: true });
+    vaultEl.addEventListener('touchmove', onMove, { passive: false });
+    vaultEl.addEventListener('touchend', onEnd);
+    vaultEl.addEventListener('touchcancel', onEnd);
   }
 
   function loadActive() {
@@ -930,7 +1047,9 @@ export async function mount(root) {
   unsubFolders = foldersCol.subscribe(paintFolders);
   applyViewMode();
   showEditor(false);
-  setVaultOpen(true);
+  // Desktop: split pane open. Mobile: overlay closed; open via hamburger or edge-pull.
+  setVaultOpen(!isMobile());
+  bindVaultSwipe();
 
   toggleVaultBtn.addEventListener('click', () => setVaultOpen(!vaultOpen));
   root.querySelector('#n-close-vault').addEventListener('click', () => setVaultOpen(false));
@@ -942,7 +1061,12 @@ export async function mount(root) {
     setVaultOpen(false);
     setContextOpen(false);
   });
-  window.addEventListener('resize', syncBackdrop);
+  window.addEventListener('resize', () => {
+    clearVaultDragStyles();
+    // Crossing the mobile breakpoint: keep desktop pane open, leave mobile closed unless already open.
+    if (!isMobile() && !vaultOpen) setVaultOpen(true);
+    else syncBackdrop();
+  });
 
   treeEl.addEventListener('click', async (e) => {
     hideCtxMenu();

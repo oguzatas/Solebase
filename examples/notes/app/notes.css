@@ -448,10 +448,16 @@
   inset: 0;
   background: rgba(4, 6, 8, 0.45);
   z-index: 20;
+  touch-action: none;
 }
 
 .drawer-backdrop[hidden] {
   display: none !important;
+}
+
+/* Invisible left-edge hit target for pull-to-open (mobile only). */
+.vault-edge-pull {
+  display: none;
 }
 
 .vault-drawer,
@@ -844,6 +850,8 @@
     transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
     pointer-events: auto;
     border-color: var(--line);
+    will-change: transform;
+    touch-action: pan-y;
   }
 
   .context-drawer {
@@ -855,6 +863,22 @@
   .vault.vault-open .vault-drawer,
   .vault.context-open .context-drawer {
     transform: none;
+  }
+
+  .vault-edge-pull {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: max(1.25rem, env(safe-area-inset-left, 0px));
+    z-index: 18;
+    touch-action: none;
+    pointer-events: auto;
+  }
+
+  .vault.vault-open .vault-edge-pull {
+    pointer-events: none;
   }
 
   .vault-bar {
