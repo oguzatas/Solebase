@@ -24,7 +24,7 @@ const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 /** CDN QR lib (zero-build). Loaded once on first Share paint. */
 const QR_MODULE_URL = 'https://esm.sh/qrcode@1.5.4';
 
-const SAVED_SECRET_PLACEHOLDER = '•••••••• (saved on this device)';
+const SAVED_SECRET_PLACEHOLDER = '******** (saved on this device)';
 
 /** @type {string} in-memory passphrase (restored from localStorage when remembered) */
 let sessionPassphrase = '';

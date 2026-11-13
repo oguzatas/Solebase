@@ -50,7 +50,7 @@ CORS on `solebase-sync-test` already allows `http://127.0.0.1:8080`, `http://loc
 2. Prefills: endpoint `https://7701962a7c1ef34d73878ef8650ef733.r2.cloudflarestorage.com`, bucket `solebase-sync-test`, region `auto`
 3. Paste Access Key ID + Secret (browser localStorage only — never commit)
 4. Reuse the same **encryption key** + `appId: 'notes'` on every device
-5. Leave **Remember credentials on this device** checked → **Save settings** once. Refresh keeps sync without re-entry (secret fields show a masked placeholder; blank = keep saved).
+5. Leave **Remember credentials on this device** checked → **Save settings** once. Refresh keeps sync without re-entry (secret fields show `******** (saved on this device)`; blank = keep saved).
 6. Storage keys: `prompt2ui:settings` (R2 fields + optional passphrase), `solebase:notes:deviceKey` (encryptionKey)
 
 **Save settings** → wires `Solebase.init({ sync: { provider: 's3', options } })` from localStorage → **Sync Now**
