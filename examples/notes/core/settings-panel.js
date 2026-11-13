@@ -17,6 +17,7 @@ import {
 } from './prompt-storage.js';
 import { db, R2_DEFAULTS } from './db-api.js';
 import { syncEngine } from './sync-engine.js';
+import { createBootstrapShare } from './credential-bootstrap.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
@@ -254,6 +255,38 @@ export function initSettingsPanel(opts = {}) {
     }
   });
 
+  $('#cfg-bootstrap-generate')?.addEventListener('click', async () => {
+    try {
+      readSettingsFromForm();
+      await paintBootstrapShare({ force: true });
+      toastFn('Device bootstrap QR ready', 'ok');
+    } catch (err) {
+      toastFn(err.message || 'Could not create bootstrap QR', 'err');
+    }
+  });
+
+  $('#cfg-bootstrap-copy')?.addEventListener('click', async () => {
+    const url = $('#cfg-bootstrap-url')?.value;
+    if (!url) {
+      toastFn('Generate a bootstrap link first', 'info');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      toastFn('Bootstrap URL copied', 'ok');
+    } catch {
+      const input = $('#cfg-bootstrap-url');
+      if (input) {
+        input.focus();
+        input.select();
+        document.execCommand('copy');
+        toastFn('Bootstrap URL copied', 'ok');
+      } else {
+        toastFn('Could not copy URL', 'err');
+      }
+    }
+  });
+
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') closeSettings();
   });
@@ -312,6 +345,7 @@ function paintSettingsForm() {
   updateAdapterPanels(s.adapter);
   updateSyncStatus();
   paintSharePanel();
+  paintBootstrapPanelIdle();
 }
 
 function isLocalHostOrigin(hostname = location.hostname) {
@@ -321,6 +355,33 @@ function isLocalHostOrigin(hostname = location.hostname) {
     hostname === '[::1]' ||
     hostname === '::1'
   );
+}
+
+function paintQrOnCanvas(canvas, text) {
+  if (!canvas) return Promise.resolve();
+
+  const fallback = (label = 'QR unavailable') => {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.fillStyle = '#111419';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#6b7380';
+    ctx.font = '12px Figtree, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, canvas.width / 2, canvas.height / 2);
+  };
+
+  return loadQrModule()
+    .then((mod) => {
+      const QRCode = mod.default || mod;
+      return QRCode.toCanvas(canvas, text, {
+        width: canvas.width || 168,
+        margin: 1,
+        color: { dark: '#e6e9ee', light: '#111419' },
+        errorCorrectionLevel: 'M',
+      });
+    })
+    .catch(() => fallback());
 }
 
 function paintSharePanel() {
@@ -336,30 +397,75 @@ function paintSharePanel() {
     localTip.hidden = !isLocalHostOrigin();
   }
 
-  if (!canvas) return;
+  paintQrOnCanvas(canvas, url);
+}
 
-  const fallback = () => {
+function paintBootstrapPanelIdle() {
+  const status = $('#cfg-bootstrap-status');
+  const urlInput = $('#cfg-bootstrap-url');
+  const canvas = $('#cfg-bootstrap-qr');
+  if (urlInput && !urlInput.dataset.live) urlInput.value = '';
+  if (status && !status.dataset.live) {
+    status.textContent =
+      'Generates a short-lived link that fills R2 credentials + encryption key on another device.';
+  }
+  if (canvas && !canvas.dataset.live) {
     const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.fillStyle = '#111419';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = '#6b7380';
-    ctx.font = '12px Figtree, sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('QR unavailable', canvas.width / 2, canvas.height / 2);
-  };
+    if (ctx) {
+      ctx.fillStyle = '#111419';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#6b7380';
+      ctx.font = '12px Figtree, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('Generate to show QR', canvas.width / 2, canvas.height / 2);
+    }
+  }
+}
 
-  loadQrModule()
-    .then((mod) => {
-      const QRCode = mod.default || mod;
-      return QRCode.toCanvas(canvas, url, {
-        width: 168,
-        margin: 1,
-        color: { dark: '#e6e9ee', light: '#111419' },
-        errorCorrectionLevel: 'M',
-      });
-    })
-    .catch(() => fallback());
+/**
+ * Create (or refresh) the credential bootstrap QR / URL.
+ * @param {{ force?: boolean }} [opts]
+ */
+async function paintBootstrapShare(opts = {}) {
+  const status = $('#cfg-bootstrap-status');
+  const urlInput = $('#cfg-bootstrap-url');
+  const canvas = $('#cfg-bootstrap-qr');
+  const localTip = $('#cfg-bootstrap-localhost-tip');
+
+  if (localTip) localTip.hidden = !isLocalHostOrigin();
+
+  if (!opts.force && urlInput?.dataset.live === '1') return;
+
+  if (status) {
+    status.textContent = 'Creating short-lived bootstrap…';
+    status.dataset.live = '0';
+  }
+
+  const share = await createBootstrapShare({
+    settings: loadSettings(),
+    encryptionKey: db.getEncryptionKey(),
+  });
+
+  if (urlInput) {
+    urlInput.value = share.url;
+    urlInput.dataset.live = '1';
+  }
+  if (canvas) canvas.dataset.live = '1';
+
+  const mins = Math.round((share.expiresAt - Date.now()) / 60000);
+  const modeHint =
+    share.mode === 'r2'
+      ? `Short link (R2 one-time id). Expires in ~${mins || 1} min; deleted after first successful open when possible.`
+      : `Compact payload in URL (R2 short-upload unavailable). Expires in ~${mins || 1} min.`;
+
+  if (status) {
+    status.textContent = modeHint;
+    status.dataset.live = '1';
+    status.dataset.ok = '1';
+  }
+
+  await paintQrOnCanvas(canvas, share.url);
+  return share;
 }
 
 function updateAdapterPanels(adapterId) {

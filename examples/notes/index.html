@@ -387,6 +387,31 @@
           <li>After the first visit, the service worker + OPFS-backed Solebase vault keep the app usable offline. Losing internet ≠ losing the app once cached.</li>
           <li id="cfg-share-localhost-tip" hidden>localhost cannot be opened usefully on a phone for E2EE — deploy over HTTPS (GitHub Pages / Cloudflare Pages / Netlify) or a TLS tunnel, then scan this QR. See docs/SHIP.md.</li>
         </ul>
+
+        <h3 style="margin-top:1.1rem">Share to another device</h3>
+        <p class="settings-hint">
+          One-time QR / link that copies R2 credentials + encryption key into the other device’s localStorage and starts Solebase sync.
+          Prefer short-lived R2 blob (~20 min TTL, delete-after-read). Requires Save’d R2 keys on this desktop first.
+        </p>
+        <p id="cfg-bootstrap-status">Generates a short-lived link that fills R2 credentials + encryption key on another device.</p>
+        <div class="settings-actions" style="margin-bottom:0.55rem">
+          <button type="button" class="btn btn-primary" id="cfg-bootstrap-generate">Generate bootstrap QR</button>
+          <button type="button" class="btn btn-ghost" id="cfg-bootstrap-copy">Copy link</button>
+        </div>
+        <label class="settings-field">
+          <span>Bootstrap link</span>
+          <div class="share-url-row">
+            <input type="text" id="cfg-bootstrap-url" readonly autocomplete="off" spellcheck="false" placeholder="Generate to create a one-time link" />
+          </div>
+        </label>
+        <div class="share-qr-wrap">
+          <canvas id="cfg-bootstrap-qr" width="168" height="168" role="img" aria-label="QR code for credential bootstrap"></canvas>
+        </div>
+        <ul class="settings-tips">
+          <li>On the phone: scan the QR (or open the link) — no need to re-type keys. Camera scan in-app is optional; the URL is enough.</li>
+          <li>Treat the link like a password until it expires or is consumed.</li>
+          <li id="cfg-bootstrap-localhost-tip" hidden>Generate this QR on the deployed HTTPS origin (solebase.pages.dev), not localhost, so the phone can open it.</li>
+        </ul>
       </section>
 
       <section class="settings-section">

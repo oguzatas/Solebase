@@ -4,6 +4,12 @@
 
 import { mount as mountApp } from './app/notes.js';
 import { initSettingsPanel } from './core/settings-panel.js';
+import { db } from './core/db-api.js';
+import {
+  readBootstrapParam,
+  consumeBootstrapToken,
+  clearBootstrapParamFromUrl,
+} from './core/credential-bootstrap.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 
@@ -15,7 +21,7 @@ function toast(message, type = 'info') {
   toastEl.dataset.type = type;
   toastEl.classList.add('show');
   clearTimeout(toast._t);
-  toast._t = setTimeout(() => toastEl.classList.remove('show'), 3200);
+  toast._t = setTimeout(() => toastEl.classList.remove('show'), type === 'err' ? 5200 : 3600);
 }
 
 /** @type {{ unmount?: () => void } | null} */
@@ -36,6 +42,41 @@ async function mountMainApp() {
   activeHandle = await mountApp(mainPane);
 }
 
+/**
+ * If URL has ?bootstrap=, apply credentials then reconfigure Solebase before mount.
+ * @returns {Promise<boolean>} true when a bootstrap token was handled
+ */
+async function maybeConsumeBootstrap() {
+  const token = readBootstrapParam();
+  if (!token) return false;
+
+  toast('Applying device bootstrap…', 'info');
+  try {
+    const result = await consumeBootstrapToken(token);
+    clearBootstrapParamFromUrl();
+    await db.reconfigure();
+    toast(
+      result.mode === 'r2'
+        ? 'Credentials imported from QR — Solebase sync ready'
+        : 'Credentials imported — Solebase sync ready',
+      'ok'
+    );
+    try {
+      const sync = await db.syncNow('bootstrap');
+      if (sync?.ok !== false && sync?.reason !== 'idle') {
+        toast('Synced with Solebase (R2)', 'ok');
+      }
+    } catch {
+      /* sync is best-effort after bootstrap */
+    }
+    return true;
+  } catch (err) {
+    clearBootstrapParamFromUrl();
+    toast(err.message || 'Bootstrap failed', 'err');
+    return false;
+  }
+}
+
 async function boot() {
   initSettingsPanel({
     toast,
@@ -48,6 +89,8 @@ async function boot() {
   if (params.get('code') && params.get('scope')?.includes('drive')) {
     history.replaceState({}, '', location.pathname + location.hash);
   }
+
+  await maybeConsumeBootstrap();
 
   try {
     await mountMainApp();

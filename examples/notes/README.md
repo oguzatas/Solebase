@@ -29,6 +29,28 @@ App code never opens IndexedDB as the notes database.
 
 Serving the example is a **static file host** only. Same URL on two phones does **not** share notes. Each device keeps its own OPFS vault; offline works after the first visit (service worker + Solebase). **Sync** is optional E2EE to Drive/WebDAV/S3 — separate from hosting. Settings → **Share** copies/QR the origin (not a native install). See [docs/SHIP.md](../../docs/SHIP.md).
 
+## Share credentials desktop → phone (QR bootstrap)
+
+After R2 keys + encryption key are saved on the desktop:
+
+1. Open https://solebase.pages.dev/examples/notes/ → **Settings** → **Share to another device** → **Generate bootstrap QR**
+2. Scan the QR with the phone camera (or **Copy link** and open it). No in-app scanner required — the URL carries `?bootstrap=…`.
+3. Phone applies credentials into localStorage, runs `Solebase.init` with the same `appId` / encryption key / R2 options, then is ready to sync.
+
+**URL shapes**
+
+| Mode | Example | When |
+|------|---------|------|
+| Short R2 | `…/examples/notes/?bootstrap=r.<id>.<key>` | Encrypted JSON uploaded to public bucket `solebase-bootstrap` (TTL ~20 min; delete-after-read when possible) |
+| Compact | `…/examples/notes/?bootstrap=c.<base64url>` | Fallback when short upload is unavailable — payload fits in the QR |
+
+**Security**
+
+- Bootstrap links contain (or unlock) R2 secrets + the vault encryption key — treat like a password until expiry/consume.
+- Prefer generating on HTTPS (`solebase.pages.dev`), not localhost.
+- Never commit Access Key / Secret / encryption keys to git.
+- For short links, grant the R2 API token **Object Read & Write** on bucket `solebase-bootstrap` (same account) in addition to `solebase-sync-test`.
+
 ## Sync across devices (Cloudflare R2)
 
 There is no Solebase server for your notes. Data stays in OPFS on each browser; optional **Layer 1 E2EE changeset sync** uses an R2 bucket you control.

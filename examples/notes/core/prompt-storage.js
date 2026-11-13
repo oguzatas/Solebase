@@ -517,22 +517,48 @@ export class S3CompatibleAdapter {
     return { ok: true, label: `S3 → ${this.objectUrl}` };
   }
 
+  objectUrlFor(key) {
+    const endpoint = (this.settings.s3Endpoint || '').replace(/\/$/, '');
+    const bucket = this.settings.s3Bucket;
+    const objectKey = String(key || this.settings.s3ObjectKey || CLOUD_BLOB_NAME).replace(/^\/+/, '');
+    return `${endpoint}/${bucket}/${objectKey}`;
+  }
+
   async pull() {
+    return this.getObject(this.settings.s3ObjectKey || CLOUD_BLOB_NAME);
+  }
+
+  async push(payload) {
+    return this.putObject(this.settings.s3ObjectKey || CLOUD_BLOB_NAME, payload);
+  }
+
+  /**
+   * GET a JSON object by key (path-style). Returns null on 404.
+   * @param {string} key
+   */
+  async getObject(key) {
     const st = await this.status();
     if (!st.ok) throw new Error(st.label);
-    const { headers } = await this._sign('GET', '');
-    const res = await fetch(this.objectUrl, { method: 'GET', headers });
+    const url = this.objectUrlFor(key);
+    const { headers } = await this._sign('GET', '', undefined, url);
+    const res = await fetch(url, { method: 'GET', headers });
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`S3 GET failed: ${res.status}`);
     return res.json();
   }
 
-  async push(payload) {
+  /**
+   * PUT a JSON-serializable object by key.
+   * @param {string} key
+   * @param {unknown} payload
+   */
+  async putObject(key, payload) {
     const st = await this.status();
     if (!st.ok) throw new Error(st.label);
-    const body = JSON.stringify(payload);
-    const { headers } = await this._sign('PUT', body, 'application/json');
-    const res = await fetch(this.objectUrl, {
+    const url = this.objectUrlFor(key);
+    const body = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    const { headers } = await this._sign('PUT', body, 'application/json', url);
+    const res = await fetch(url, {
       method: 'PUT',
       headers,
       body,
@@ -542,12 +568,31 @@ export class S3CompatibleAdapter {
   }
 
   /**
+   * DELETE an object by key (best-effort for one-time bootstrap blobs).
+   * @param {string} key
+   */
+  async deleteObject(key) {
+    const st = await this.status();
+    if (!st.ok) throw new Error(st.label);
+    const url = this.objectUrlFor(key);
+    const { headers } = await this._sign('DELETE', '', undefined, url);
+    const res = await fetch(url, { method: 'DELETE', headers });
+    if (res.status === 404) return { ok: true, missing: true };
+    if (!res.ok) throw new Error(`S3 DELETE failed: ${res.status}`);
+    return { ok: true };
+  }
+
+  /**
    * Minimal AWS SigV4 for a single object URL (path-style).
    * Sufficient for R2 / MinIO / S3 when CORS is configured.
+   * @param {string} method
+   * @param {string} body
+   * @param {string} [contentType]
+   * @param {string} [objectUrl]
    */
-  async _sign(method, body, contentType) {
+  async _sign(method, body, contentType, objectUrl = this.objectUrl) {
     const s = this.settings;
-    const url = new URL(this.objectUrl);
+    const url = new URL(objectUrl);
     const region = s.s3Region || 'auto';
     const service = 's3';
     const amzDate = new Date().toISOString().replace(/[:-]|\.\d{3}/g, '');
@@ -597,6 +642,24 @@ export class S3CompatibleAdapter {
 
     return { headers };
   }
+}
+
+/**
+ * Build an S3 adapter aimed at a specific bucket/endpoint (e.g. public bootstrap bucket).
+ * @param {object} opts
+ * @returns {S3CompatibleAdapter}
+ */
+export function createS3AdapterFor(opts = {}) {
+  const base = loadSettings();
+  return new S3CompatibleAdapter({
+    ...base,
+    s3Endpoint: opts.endpoint || base.s3Endpoint,
+    s3Region: opts.region || base.s3Region || 'auto',
+    s3Bucket: opts.bucket || base.s3Bucket,
+    s3AccessKeyId: opts.accessKeyId || base.s3AccessKeyId,
+    s3SecretAccessKey: opts.secretAccessKey || base.s3SecretAccessKey,
+    s3ObjectKey: opts.objectKey || base.s3ObjectKey || CLOUD_BLOB_NAME,
+  });
 }
 
 /* ─── Adapter factory ──────────────────────────────────────────────── */
