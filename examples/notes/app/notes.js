@@ -41,6 +41,7 @@ const I = {
   trash: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 7h16M9 7V5h6v2M8 7l.6 12h6.8L16 7"/></svg>`,
   gear: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`,
   close: `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>`,
+  more: `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="12" cy="5" r="1.25" fill="currentColor"/><circle cx="12" cy="12" r="1.25" fill="currentColor"/><circle cx="12" cy="19" r="1.25" fill="currentColor"/></svg>`,
 };
 
 function todayTitle() {
@@ -138,22 +139,35 @@ export async function mount(root) {
         <div class="vault-bar-left">
           <button type="button" class="icon-btn" id="n-toggle-vault" aria-label="Notes list" title="Notes list" aria-expanded="true">${I.menu}</button>
           <button type="button" class="icon-btn" id="n-new" aria-label="New note" title="New note (Ctrl/Cmd+N)">${I.plus}</button>
-          <button type="button" class="icon-btn" id="n-new-folder" aria-label="New folder" title="New folder">${I.folder}</button>
-          <button type="button" class="icon-btn" id="n-daily" aria-label="Daily note" title="Today’s note">${I.calendar}</button>
+          <button type="button" class="icon-btn bar-desktop" id="n-new-folder" aria-label="New folder" title="New folder">${I.folder}</button>
+          <button type="button" class="icon-btn bar-desktop" id="n-daily" aria-label="Daily note" title="Today’s note">${I.calendar}</button>
           <button type="button" class="icon-btn" id="n-switcher" aria-label="Quick switcher" title="Quick switcher (Ctrl/Cmd+P)">${I.search}</button>
         </div>
         <div class="vault-bar-center">
           <input type="text" id="n-title" class="title-input" placeholder="Untitled" maxlength="160" />
         </div>
         <div class="vault-bar-right">
-          <div class="view-toggle" role="group" aria-label="Editor view">
+          <div class="view-toggle bar-desktop" role="group" aria-label="Editor view">
             <button type="button" class="icon-btn view-btn" data-view="edit" aria-label="Edit" title="Edit">${I.edit}</button>
             <button type="button" class="icon-btn view-btn" data-view="split" aria-label="Split" title="Split">${I.split}</button>
             <button type="button" class="icon-btn view-btn" data-view="preview" aria-label="Preview" title="Preview">${I.eye}</button>
           </div>
-          <button type="button" class="icon-btn" id="n-pin" aria-label="Pin note" title="Pin">${I.star}</button>
-          <button type="button" class="icon-btn" id="n-delete" aria-label="Delete note" title="Delete">${I.trash}</button>
-          <button type="button" class="icon-btn" id="n-toggle-context" aria-label="Outline and links" title="Outline &amp; links" aria-expanded="false">${I.panel}</button>
+          <button type="button" class="icon-btn bar-desktop" id="n-pin" aria-label="Pin note" title="Pin">${I.star}</button>
+          <button type="button" class="icon-btn bar-desktop" id="n-delete" aria-label="Delete note" title="Delete">${I.trash}</button>
+          <button type="button" class="icon-btn bar-desktop" id="n-toggle-context" aria-label="Outline and links" title="Outline &amp; links" aria-expanded="false">${I.panel}</button>
+          <div class="bar-overflow">
+            <button type="button" class="icon-btn bar-mobile" id="n-more" aria-label="More actions" title="More" aria-haspopup="menu" aria-expanded="false" aria-controls="n-more-menu">${I.more}</button>
+            <div class="bar-overflow-menu" id="n-more-menu" role="menu" hidden>
+              <button type="button" role="menuitem" data-bar-act="new-folder">${I.folder}<span>New folder</span></button>
+              <button type="button" role="menuitem" data-bar-act="daily">${I.calendar}<span>Daily note</span></button>
+              <button type="button" role="menuitem" data-bar-act="view-edit">${I.edit}<span>Edit</span></button>
+              <button type="button" role="menuitem" data-bar-act="view-split">${I.split}<span>Split</span></button>
+              <button type="button" role="menuitem" data-bar-act="view-preview">${I.eye}<span>Preview</span></button>
+              <button type="button" role="menuitem" data-bar-act="pin" id="n-more-pin">${I.star}<span>Pin</span></button>
+              <button type="button" role="menuitem" data-bar-act="delete">${I.trash}<span>Delete</span></button>
+              <button type="button" role="menuitem" data-bar-act="context">${I.panel}<span>Outline &amp; links</span></button>
+            </div>
+          </div>
           <button type="button" class="icon-btn" id="n-settings" data-open-settings aria-label="Settings" title="Settings · Share / install / sync">${I.gear}</button>
         </div>
       </header>
@@ -251,6 +265,9 @@ export async function mount(root) {
   const backlinksEl = root.querySelector('#n-backlinks');
   const outgoingEl = root.querySelector('#n-outgoing');
   const pinBtn = root.querySelector('#n-pin');
+  const morePinBtn = root.querySelector('#n-more-pin');
+  const moreBtn = root.querySelector('#n-more');
+  const moreMenu = root.querySelector('#n-more-menu');
   const vaultEl = root.querySelector('.vault');
   const vaultDrawer = root.querySelector('#vault-drawer');
   const contextDrawer = root.querySelector('#context-drawer');
@@ -263,6 +280,22 @@ export async function mount(root) {
   const switcherList = root.querySelector('#switcher-list');
   const metaEl = root.querySelector('#n-meta');
   const ctxMenu = root.querySelector('#ctx-menu');
+
+  function setMoreOpen(open) {
+    if (!moreBtn || !moreMenu) return;
+    moreMenu.hidden = !open;
+    moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    moreBtn.classList.toggle('is-active', open);
+  }
+
+  function syncMoreMenuState() {
+    if (!moreMenu) return;
+    moreMenu.querySelectorAll('[data-bar-act^="view-"]').forEach((btn) => {
+      const mode = btn.getAttribute('data-bar-act')?.slice(5);
+      btn.classList.toggle('is-active', mode === viewMode);
+    });
+    if (morePinBtn) morePinBtn.classList.toggle('is-on', pinBtn.classList.contains('is-on'));
+  }
 
   let switcherIndex = 0;
   /** @type {object[]} */
@@ -448,6 +481,7 @@ export async function mount(root) {
     root.querySelectorAll('.view-btn').forEach((btn) => {
       btn.classList.toggle('is-active', btn.getAttribute('data-view') === viewMode);
     });
+    syncMoreMenuState();
     if (viewMode !== 'edit') refreshPreview();
   }
 
@@ -539,6 +573,7 @@ export async function mount(root) {
     tagsEl.value = (Array.isArray(note.tags) ? note.tags : []).join(', ');
     setBody(note.body || '');
     pinBtn.classList.toggle('is-on', !!note.pinned);
+    syncMoreMenuState();
     boundNoteId = note.id;
     applyViewMode();
     refreshSidePanels();
@@ -612,6 +647,7 @@ export async function mount(root) {
     tagsEl.value = (Array.isArray(row.tags) ? row.tags : []).join(', ');
     setBody(row.body || '');
     pinBtn.classList.toggle('is-on', !!row.pinned);
+    syncMoreMenuState();
     boundNoteId = row.id;
     return row;
   }
@@ -979,10 +1015,16 @@ export async function mount(root) {
   });
 
   function onPointerDown(e) {
-    if (ctxMenu.hidden) return;
-    if (Date.now() < menuGuardUntil) return;
-    if (ctxMenu.contains(e.target)) return;
-    hideCtxMenu();
+    if (!ctxMenu.hidden) {
+      if (Date.now() < menuGuardUntil) return;
+      if (ctxMenu.contains(e.target)) return;
+      hideCtxMenu();
+    }
+    if (moreMenu && !moreMenu.hidden) {
+      const t = e.target;
+      if (t instanceof Node && (moreMenu.contains(t) || moreBtn?.contains(t))) return;
+      setMoreOpen(false);
+    }
   }
   document.addEventListener('pointerdown', onPointerDown, true);
 
@@ -1006,12 +1048,7 @@ export async function mount(root) {
     titleEl.select();
   }
 
-  root.querySelector('#n-new').addEventListener('click', onNewNote);
-  root.querySelector('#n-drawer-new').addEventListener('click', onNewNote);
-  root.querySelector('#n-new-folder').addEventListener('click', () => createFolder(''));
-  root.querySelector('#n-drawer-folder').addEventListener('click', () => createFolder(''));
-
-  root.querySelector('#n-daily').addEventListener('click', async () => {
+  async function onDailyNote() {
     const title = todayTitle();
     const existing = findByTitle(title);
     if (existing) {
@@ -1033,11 +1070,9 @@ export async function mount(root) {
       tags: ['daily'],
       body: `# ${title}\n\n## Notes\n\n- [ ] \n\n## Log\n\n`,
     });
-  });
+  }
 
-  root.querySelector('#n-switcher').addEventListener('click', openSwitcher);
-
-  root.querySelector('#n-delete').addEventListener('click', async () => {
+  async function onDeleteNote() {
     if (!activeId) return;
     const note = cache.find((n) => n.id === activeId);
     const label = note?.title || 'this note';
@@ -1045,19 +1080,56 @@ export async function mount(root) {
     const id = activeId;
     activeId = null;
     await notes.remove(id);
-  });
+  }
 
-  pinBtn.addEventListener('click', () => {
+  function onTogglePin() {
     if (!activeId) return;
     pinBtn.classList.toggle('is-on');
+    syncMoreMenuState();
     scheduleSave();
+  }
+
+  root.querySelector('#n-new').addEventListener('click', onNewNote);
+  root.querySelector('#n-drawer-new').addEventListener('click', onNewNote);
+  root.querySelector('#n-new-folder').addEventListener('click', () => createFolder(''));
+  root.querySelector('#n-drawer-folder').addEventListener('click', () => createFolder(''));
+  root.querySelector('#n-daily').addEventListener('click', () => {
+    void onDailyNote();
   });
+  root.querySelector('#n-switcher').addEventListener('click', openSwitcher);
+  root.querySelector('#n-delete').addEventListener('click', () => {
+    void onDeleteNote();
+  });
+  pinBtn.addEventListener('click', onTogglePin);
 
   root.querySelectorAll('.view-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       viewMode = /** @type {'edit'|'preview'|'split'} */ (btn.getAttribute('data-view') || 'edit');
       applyViewMode();
     });
+  });
+
+  moreBtn?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const next = moreMenu?.hidden !== false;
+    setMoreOpen(next);
+    if (next) syncMoreMenuState();
+  });
+
+  moreMenu?.addEventListener('click', (e) => {
+    const btn = e.target instanceof Element ? e.target.closest('[data-bar-act]') : null;
+    if (!(btn instanceof HTMLElement)) return;
+    const act = btn.getAttribute('data-bar-act');
+    setMoreOpen(false);
+    if (act === 'new-folder') createFolder('');
+    else if (act === 'daily') void onDailyNote();
+    else if (act === 'delete') void onDeleteNote();
+    else if (act === 'pin') onTogglePin();
+    else if (act === 'context') setContextOpen(!contextOpen);
+    else if (act === 'view-edit' || act === 'view-split' || act === 'view-preview') {
+      viewMode = /** @type {'edit'|'preview'|'split'} */ (act.slice(5));
+      applyViewMode();
+    }
   });
 
   titleEl.addEventListener('input', () => {
@@ -1153,6 +1225,11 @@ export async function mount(root) {
       if (!ctxMenu.hidden) {
         e.preventDefault();
         hideCtxMenu();
+        return;
+      }
+      if (moreMenu && !moreMenu.hidden) {
+        e.preventDefault();
+        setMoreOpen(false);
         return;
       }
       if (!switcherEl.hidden) {

@@ -14,10 +14,18 @@
   align-items: center;
   gap: 0.5rem;
   min-height: 2.6rem;
-  padding: 0.35rem 0.55rem;
+  padding:
+    max(0.35rem, env(safe-area-inset-top, 0px))
+    max(0.55rem, env(safe-area-inset-right, 0px))
+    0.35rem
+    max(0.55rem, env(safe-area-inset-left, 0px));
   border-bottom: 1px solid var(--line);
   background: var(--bg-panel);
   flex-shrink: 0;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: visible;
 }
 
 .vault-bar-left,
@@ -26,6 +34,7 @@
   align-items: center;
   gap: 0.15rem;
   flex-shrink: 0;
+  min-width: 0;
 }
 
 .vault-bar-center {
@@ -33,6 +42,72 @@
   min-width: 0;
   display: flex;
   justify-content: center;
+}
+
+.bar-mobile {
+  display: none;
+}
+
+.bar-overflow {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.bar-overflow-menu {
+  position: absolute;
+  top: calc(100% + 0.3rem);
+  right: 0;
+  z-index: 40;
+  min-width: 11.5rem;
+  max-width: min(16rem, calc(100vw - 1rem));
+  padding: 0.3rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: 0.45rem;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.bar-overflow-menu[hidden] {
+  display: none !important;
+}
+
+.bar-overflow-menu button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.82rem;
+  text-align: left;
+  padding: 0.45rem 0.55rem;
+  border-radius: 0.3rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+}
+
+.bar-overflow-menu button:hover,
+.bar-overflow-menu button.is-active,
+.bar-overflow-menu button.is-on {
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+}
+
+.bar-overflow-menu button.is-on {
+  color: var(--warn);
+}
+
+.bar-overflow-menu button[data-bar-act="delete"]:hover {
+  background: rgba(201, 122, 122, 0.14);
+  color: var(--danger);
+}
+
+.bar-overflow-menu button span {
+  flex: 1;
 }
 
 .title-input {
@@ -746,6 +821,11 @@
 }
 
 @media (max-width: 720px) {
+  .vault {
+    overflow-x: clip;
+    max-width: 100%;
+  }
+
   .vault-stage,
   .vault.vault-open .vault-stage,
   .vault.context-open .vault-stage,
@@ -778,20 +858,38 @@
   }
 
   .vault-bar {
-    flex-wrap: wrap;
+    flex-wrap: nowrap;
+    gap: 0.25rem;
+  }
+
+  .vault-bar-left,
+  .vault-bar-right {
+    flex-shrink: 0;
   }
 
   .vault-bar-center {
-    order: 3;
-    flex: 1 1 100%;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .bar-desktop {
+    display: none !important;
+  }
+
+  .bar-mobile {
+    display: inline-flex;
   }
 
   .title-input {
     text-align: left;
+    font-size: 0.9rem;
+    padding-inline: 0.35rem;
   }
 
   .vault-meta {
     grid-template-columns: 1fr;
+    padding-left: max(0.75rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.75rem, env(safe-area-inset-right, 0px));
   }
 
   .vault-panes[data-mode="split"] {
