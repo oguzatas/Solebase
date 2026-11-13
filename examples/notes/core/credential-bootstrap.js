@@ -250,7 +250,6 @@ export function applyBootstrapPayload(payload) {
   const data = assertFreshPayload(payload);
   setEncryptionKey(data.encryptionKey);
   saveSettings({
-    adapter: 'local',
     rememberOnDevice: true,
     encryptionKey: data.encryptionKey,
     s3Endpoint: data.s3Endpoint || R2_DEFAULTS.endpoint,

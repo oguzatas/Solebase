@@ -474,62 +474,9 @@
       </section>
 
       <section class="settings-section">
-        <h3>Legacy snapshot adapters</h3>
-        <p class="settings-hint">Optional older full-vault JSON sync (Drive / WebDAV / S3 object). Prefer Solebase R2 sync above for changeset E2EE.</p>
-        <label class="settings-field">
-          <span>Adapter</span>
-          <select id="cfg-adapter"></select>
-        </label>
-        <label class="settings-field">
-          <span>Passphrase (legacy snapshot E2EE)</span>
-          <input type="password" id="cfg-passphrase" autocomplete="off" placeholder="Required for legacy cloud sync" />
-        </label>
-      </section>
-
-      <section class="settings-section" data-adapter-panel="google-drive" hidden>
-        <h3>Google Drive</h3>
-        <p class="settings-hint">Optional. Create an OAuth 2.0 Web client in Google Cloud Console. Authorized JS origin = this page’s origin. Scope: drive.appdata.</p>
-        <label class="settings-field">
-          <span>OAuth Client ID</span>
-          <input type="text" id="cfg-google-client" placeholder="123456789-xxxx.apps.googleusercontent.com" />
-        </label>
-        <div class="settings-actions">
-          <button type="button" class="btn btn-ghost" id="cfg-connect-google">Connect Google</button>
-        </div>
-      </section>
-
-      <section class="settings-section" data-adapter-panel="webdav" hidden>
-        <h3>WebDAV</h3>
-        <p class="settings-hint">Recommended. Nextcloud example: https://cloud.example/remote.php/dav/files/USER/Solebase/</p>
-        <label class="settings-field">
-          <span>Folder URL</span>
-          <input type="url" id="cfg-webdav-url" placeholder="https://…" />
-        </label>
-        <label class="settings-field">
-          <span>Username</span>
-          <input type="text" id="cfg-webdav-user" autocomplete="username" />
-        </label>
-        <label class="settings-field">
-          <span>Password / app password</span>
-          <input type="password" id="cfg-webdav-pass" autocomplete="current-password" />
-        </label>
-      </section>
-
-      <section class="settings-section" data-adapter-panel="s3" hidden>
-        <h3>Legacy S3 vault object</h3>
-        <p class="settings-hint">Single encrypted JSON object (legacy). Layer 1 R2 sync uses the Solebase sync section above instead.</p>
-        <label class="settings-field">
-          <span>Object key</span>
-          <input type="text" id="cfg-s3-object" placeholder="solebase-notes-vault.json" />
-        </label>
-      </section>
-
-      <section class="settings-section">
         <h3>Backup</h3>
-        <p class="settings-hint">Manual vault export/import and legacy push/pull. Solebase Sync Now is in the R2 section.</p>
+        <p class="settings-hint">Local JSON export/import of notes + folders (OPFS vault). Cross-device sync uses Solebase Sync Now above.</p>
         <div class="settings-actions">
-          <button type="button" class="btn btn-ghost" id="cfg-push">Legacy sync now</button>
-          <button type="button" class="btn btn-ghost" id="cfg-pull">Legacy pull &amp; merge</button>
           <button type="button" class="btn btn-ghost" id="cfg-export">Export vault</button>
           <label class="btn btn-ghost" style="cursor:pointer">
             Import vault

@@ -1,8 +1,8 @@
 /**
- * sw.js — Notes example service worker
+ * sw.js — Notes example service worker (Solebase-only shell)
  */
 
-const CACHE = 'notes-solebase-v4';
+const CACHE = 'notes-solebase-v5';
 
 const PRECACHE = [
   './',
@@ -15,7 +15,6 @@ const PRECACHE = [
   './core/prompt-crypto.js',
   './core/prompt-storage.js',
   './core/credential-bootstrap.js',
-  './core/sync-engine.js',
   './core/settings-panel.js',
   './manifest.json',
   './icons/icon.svg',

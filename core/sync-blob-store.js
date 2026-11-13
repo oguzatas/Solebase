@@ -145,7 +145,8 @@ export class S3BlobStore {
     if (!st.ok) throw new Error(st.label);
     assertBytes(bytes);
     const url = this.objectUrl(key);
-    const body = bytes;
+    // Copy so WebCrypto digest + fetch body never share one buffer (Safari).
+    const body = new Uint8Array(bytes);
     const { headers } = await signAwsV4({
       method: 'PUT',
       url,
@@ -155,7 +156,7 @@ export class S3BlobStore {
       secretAccessKey: this.secretAccessKey,
       region: this.region,
     });
-    const res = await fetch(url, { method: 'PUT', headers, body });
+    const res = await fetch(url, { method: 'PUT', headers, body: new Uint8Array(body) });
     if (!res.ok) throw new Error(`S3 PUT failed: ${res.status}`);
     return { key, bytes: bytes.byteLength };
   }
@@ -480,22 +481,29 @@ async function signAwsV4(opts) {
   return { headers };
 }
 
+function toCryptoBytes(data) {
+  if (typeof data === 'string') return new TextEncoder().encode(data);
+  if (data instanceof ArrayBuffer) return new Uint8Array(data);
+  if (ArrayBuffer.isView(data)) {
+    return new Uint8Array(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength));
+  }
+  return new Uint8Array();
+}
+
 async function sha256Hex(data) {
-  const buf = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-  const hash = await crypto.subtle.digest('SHA-256', buf);
+  const hash = await crypto.subtle.digest('SHA-256', toCryptoBytes(data));
   return hex(hash);
 }
 
 async function hmac(key, data) {
   const cryptoKey = await crypto.subtle.importKey(
     'raw',
-    typeof key === 'string' ? new TextEncoder().encode(key) : key,
+    toCryptoBytes(key),
     { name: 'HMAC', hash: 'SHA-256' },
     false,
     ['sign'],
   );
-  const payload = typeof data === 'string' ? new TextEncoder().encode(data) : data;
-  return crypto.subtle.sign('HMAC', cryptoKey, payload);
+  return crypto.subtle.sign('HMAC', cryptoKey, toCryptoBytes(data));
 }
 
 async function hmacHex(key, data) {

@@ -585,7 +585,11 @@ async function handleMessage(msg) {
       case 'close': {
         await enqueue(async () => {
           if (sqlite3 && dbPtr != null) {
-            await Promise.resolve(sqlite3.close(dbPtr));
+            try {
+              await Promise.resolve(sqlite3.close(dbPtr));
+            } catch (err) {
+              console.warn('[db-worker] sqlite close:', err);
+            }
           }
           dbPtr = null;
           sqlite3 = null;
@@ -594,6 +598,9 @@ async function handleMessage(msg) {
           ready = false;
           initPromise = null;
           ensuredCollections.clear();
+          // Brief yield so AccessHandlePool can drop sync-access handles before
+          // the host terminates this worker and a new one reopens the same OPFS.
+          await new Promise((r) => setTimeout(r, 50));
         });
         return respond(key, true, { closed: true });
       }

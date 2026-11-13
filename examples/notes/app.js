@@ -54,6 +54,7 @@ async function maybeConsumeBootstrap() {
   try {
     const result = await consumeBootstrapToken(token);
     clearBootstrapParamFromUrl();
+    // One reopen after credential apply (with OPFS contention retries).
     await db.reconfigure();
     toast(
       result.mode === 'r2'
@@ -62,12 +63,15 @@ async function maybeConsumeBootstrap() {
       'ok'
     );
     try {
+      // syncNow reuses the worker opened by reconfigure — do not reopen again.
       const sync = await db.syncNow('bootstrap');
-      if (sync?.ok !== false && sync?.reason !== 'idle') {
+      if (sync?.ok === false) {
+        toast(sync.detail || sync.error || 'Sync failed after bootstrap', 'err');
+      } else if (sync?.reason !== 'idle') {
         toast('Synced with Solebase (R2)', 'ok');
       }
-    } catch {
-      /* sync is best-effort after bootstrap */
+    } catch (err) {
+      toast(err?.message || 'Sync failed after bootstrap', 'err');
     }
     return true;
   } catch (err) {
@@ -84,11 +88,6 @@ async function boot() {
       mountMainApp().catch((err) => toast(err.message, 'err'));
     },
   });
-
-  const params = new URLSearchParams(location.search);
-  if (params.get('code') && params.get('scope')?.includes('drive')) {
-    history.replaceState({}, '', location.pathname + location.hash);
-  }
 
   await maybeConsumeBootstrap();
 

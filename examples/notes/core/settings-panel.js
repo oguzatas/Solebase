@@ -1,46 +1,23 @@
 /**
- * settings-panel.js — Settings UI (share, backend, passphrase, export/import)
+ * settings-panel.js — Solebase Notes Settings (R2 sync + share / QR bootstrap)
  *
- * Extracted from the old multi-app shell. Choosing a remote adapter +
- * passphrase enables SyncEngine automatically (debounced pull/merge/push).
- *
- * Share = same origin URL + QR. Host is a file server only — not a database.
- * Sync (encrypted snapshot) is optional and separate from hosting.
+ * Sync path is Solebase Layer 1 only (OPFS + E2EE changesets → R2).
+ * No legacy snapshot adapters, IndexedDB PromptDB, or dual passphrase sync.
  */
 
-import { encryptPayload, decryptPayload } from './prompt-crypto.js';
 import {
   loadSettings,
   saveSettingsPreservingSecrets,
-  createAdapter,
-  listAdapters,
 } from './prompt-storage.js';
 import { db, R2_DEFAULTS } from './db-api.js';
-import { syncEngine } from './sync-engine.js';
 import { createBootstrapShare } from './credential-bootstrap.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
-const $$ = (sel, el = document) => [...el.querySelectorAll(sel)];
 
 /** CDN QR lib (zero-build). Loaded once on first Share paint. */
 const QR_MODULE_URL = 'https://esm.sh/qrcode@1.5.4';
 
 const SAVED_SECRET_PLACEHOLDER = '******** (saved on this device)';
-
-/** @type {string} in-memory passphrase (restored from localStorage when remembered) */
-let sessionPassphrase = '';
-
-/** Restore remembered passphrase into session memory once at module load. */
-(function hydrateRememberedSecrets() {
-  try {
-    const s = loadSettings();
-    if (s.rememberOnDevice !== false && s.passphrase) {
-      sessionPassphrase = s.passphrase;
-    }
-  } catch {
-    /* ignore */
-  }
-})();
 
 /** @type {(msg: string, type?: string) => void} */
 let toastFn = (msg) => console.log('[settings]', msg);
@@ -58,14 +35,6 @@ function loadQrModule() {
   return qrModulePromise;
 }
 
-export function getSessionPassphrase() {
-  return sessionPassphrase;
-}
-
-export function setSessionPassphrase(value) {
-  sessionPassphrase = value || '';
-}
-
 /**
  * Mount / wire the Settings drawer already present in index.html.
  * @param {{
@@ -75,16 +44,6 @@ export function setSessionPassphrase(value) {
  */
 export function initSettingsPanel(opts = {}) {
   if (opts.toast) toastFn = opts.toast;
-
-  syncEngine.configure({
-    getPassphrase: () => sessionPassphrase,
-    exportSnapshot: () => db.exportSnapshot(),
-    applyRemoteSnapshot: (collections) => db.applyRemoteSnapshot(collections),
-    onStatus: (msg, type) => {
-      if (type === 'err') toastFn(msg, 'err');
-    },
-  });
-  syncEngine.start();
 
   const drawer = $('#settings-drawer');
   const backdrop = $('#settings-backdrop');
@@ -102,7 +61,6 @@ export function initSettingsPanel(opts = {}) {
     drawer.setAttribute('aria-hidden', 'true');
   }
 
-  // Delegate so gear works even when the app mounts after init
   document.addEventListener('click', (e) => {
     const trigger = e.target.closest?.('[data-open-settings], #btn-settings');
     if (trigger) {
@@ -113,13 +71,10 @@ export function initSettingsPanel(opts = {}) {
   $('#btn-close-settings')?.addEventListener('click', closeSettings);
   backdrop?.addEventListener('click', closeSettings);
 
-  $('#cfg-adapter')?.addEventListener('change', (e) => {
-    updateAdapterPanels(e.target.value);
-  });
-
   $('#cfg-save')?.addEventListener('click', async () => {
     try {
       readSettingsFromForm();
+      // Reconfigure only on Save (credential changes). Never on Sync Now.
       await db.reconfigure();
       paintSettingsForm();
       toastFn('Settings saved on this device', 'ok');
@@ -129,10 +84,9 @@ export function initSettingsPanel(opts = {}) {
         if (result?.ok !== false) {
           toastFn('Solebase R2 sync enabled', 'ok');
           opts.onImported?.();
+        } else if (result?.detail || result?.error) {
+          toastFn(result.detail || result.error, 'err');
         }
-      } else if (syncEngine.isEnabled()) {
-        const result = await syncEngine.syncNow('settings-save');
-        if (result.ok) toastFn('Cloud sync enabled', 'ok');
       }
     } catch (err) {
       toastFn(err.message || 'Save failed', 'err');
@@ -142,7 +96,8 @@ export function initSettingsPanel(opts = {}) {
   $('#cfg-solebase-sync-now')?.addEventListener('click', async () => {
     try {
       readSettingsFromForm();
-      await db.reconfigure();
+      // Reuse live OPFS worker — force reopen caused phone InvalidStateError.
+      await db.ready();
       const result = await db.syncNow('manual');
       if (result?.reason === 'idle' || result?.error === 'sync not configured') {
         toastFn(result.detail || 'Paste R2 keys, then Save.', 'info');
@@ -155,62 +110,6 @@ export function initSettingsPanel(opts = {}) {
       await updateSyncStatus();
     } catch (err) {
       toastFn(err.message || 'Sync failed', 'err');
-    }
-  });
-
-  $('#cfg-connect-google')?.addEventListener('click', async () => {
-    try {
-      readSettingsFromForm();
-      const adapter = createAdapter(loadSettings());
-      if (adapter.connect) {
-        await adapter.connect();
-        toastFn('Google Drive connected', 'ok');
-        await updateSyncStatus();
-        if (syncEngine.isEnabled()) {
-          await syncEngine.syncNow('google-connect');
-        }
-      }
-    } catch (err) {
-      toastFn(err.message, 'err');
-    }
-  });
-
-  $('#cfg-push')?.addEventListener('click', async () => {
-    try {
-      readSettingsFromForm();
-      if (!sessionPassphrase && loadSettings().adapter !== 'local') {
-        throw new Error('Enter a passphrase to encrypt cloud sync');
-      }
-      const result = await syncEngine.syncNow('manual-push');
-      if (result.reason === 'idle') {
-        // Local-only: still allow exporting conceptually via push no-op
-        toastFn('Local only — nothing to push. Pick a cloud adapter + passphrase.', 'info');
-      } else if (result.ok) {
-        toastFn('Synced to cloud', 'ok');
-      } else if (result.detail) {
-        toastFn(result.detail, 'err');
-      }
-      await updateSyncStatus();
-    } catch (err) {
-      toastFn(err.message, 'err');
-    }
-  });
-
-  $('#cfg-pull')?.addEventListener('click', async () => {
-    try {
-      readSettingsFromForm();
-      const result = await syncEngine.syncNow('manual-pull');
-      if (result.reason === 'idle') {
-        toastFn('Local only — nothing to pull. Pick a cloud adapter + passphrase.', 'info');
-      } else if (result.ok) {
-        toastFn('Pulled & merged from cloud', 'ok');
-        opts.onImported?.();
-      } else if (result.detail) {
-        toastFn(result.detail, 'err');
-      }
-      await updateSyncStatus();
-    } catch (err) {
-      toastFn(err.message, 'err');
     }
   });
 
@@ -242,7 +141,6 @@ export function initSettingsPanel(opts = {}) {
       await navigator.clipboard.writeText(url);
       toastFn('URL copied', 'ok');
     } catch {
-      // Fallback for older / insecure contexts
       const input = $('#cfg-share-url');
       if (input) {
         input.focus();
@@ -291,12 +189,11 @@ export function initSettingsPanel(opts = {}) {
     if (e.key === 'Escape') closeSettings();
   });
 
-  return { openSettings, closeSettings, getSessionPassphrase };
+  return { openSettings, closeSettings };
 }
 
 /**
  * Paint a secret input: leave value blank, show masked placeholder when saved.
- * Saved value stays in localStorage and is applied on Save without re-typing.
  * @param {string} sel
  * @param {string} saved
  * @param {string} emptyPlaceholder
@@ -311,30 +208,14 @@ function paintSecretField(sel, saved, emptyPlaceholder) {
 
 function paintSettingsForm() {
   const s = loadSettings();
-  const adapterSelect = $('#cfg-adapter');
-  if (!adapterSelect) return;
 
-  adapterSelect.innerHTML = listAdapters()
-    .map((a) => `<option value="${a.id}" ${s.adapter === a.id ? 'selected' : ''}>${a.label}</option>`)
-    .join('');
-
-  if (s.rememberOnDevice !== false && s.passphrase && !sessionPassphrase) {
-    sessionPassphrase = s.passphrase;
-  }
-
-  paintSecretField('#cfg-passphrase', sessionPassphrase || s.passphrase, 'Required for legacy cloud sync');
   $('#cfg-encryption-key').value = db.getEncryptionKey();
-  $('#cfg-google-client').value = s.googleClientId || '';
-  $('#cfg-webdav-url').value = s.webdavUrl || '';
-  $('#cfg-webdav-user').value = s.webdavUsername || '';
-  paintSecretField('#cfg-webdav-pass', s.webdavPassword, 'Password / app password');
   $('#cfg-s3-endpoint').value = s.s3Endpoint || R2_DEFAULTS.endpoint;
   $('#cfg-s3-region').value = s.s3Region || R2_DEFAULTS.region;
   $('#cfg-s3-bucket').value = s.s3Bucket || R2_DEFAULTS.bucket;
   $('#cfg-s3-key').value = s.s3AccessKeyId || '';
   paintSecretField('#cfg-s3-secret', s.s3SecretAccessKey, 'Paste R2 secret access key');
   $('#cfg-s3-prefix').value = s.s3Prefix || R2_DEFAULTS.prefix;
-  $('#cfg-s3-object').value = s.s3ObjectKey || 'prompt2ui-vault.json';
   if ($('#cfg-solebase-autosync')) {
     $('#cfg-solebase-autosync').checked = s.solebaseAutoSync !== false;
   }
@@ -342,7 +223,6 @@ function paintSettingsForm() {
     $('#cfg-remember-device').checked = s.rememberOnDevice !== false;
   }
 
-  updateAdapterPanels(s.adapter);
   updateSyncStatus();
   paintSharePanel();
   paintBootstrapPanelIdle();
@@ -468,12 +348,6 @@ async function paintBootstrapShare(opts = {}) {
   return share;
 }
 
-function updateAdapterPanels(adapterId) {
-  $$('[data-adapter-panel]').forEach((panel) => {
-    panel.hidden = panel.dataset.adapterPanel !== adapterId;
-  });
-}
-
 async function updateSyncStatus() {
   const el = $('#cfg-sync-status');
   if (!el) return;
@@ -490,19 +364,11 @@ async function updateSyncStatus() {
     return;
   }
 
-  const adapter = createAdapter(settings);
-  const st = await adapter.status();
-  const enabled = syncEngine.isEnabled();
-  const syncHint = enabled
-    ? ' · legacy snapshot auto-sync on'
-    : settings.adapter === 'local'
-      ? ' · paste R2 Access Key ID + Secret for Solebase sync'
-      : ' · legacy auto-sync idle (enter passphrase)';
   const last = settings.lastSyncAt
     ? ` · last ${new Date(settings.lastSyncAt).toLocaleString()}`
     : '';
-  el.textContent = st.label + (st.detail ? ` — ${st.detail}` : '') + syncHint + last;
-  el.dataset.ok = st.ok ? '1' : '0';
+  el.textContent = `Paste R2 Access Key ID + Secret, then Save${last}`;
+  el.dataset.ok = '0';
 }
 
 function readSettingsFromForm() {
@@ -510,15 +376,6 @@ function readSettingsFromForm() {
   const rememberOnDevice = $('#cfg-remember-device')
     ? $('#cfg-remember-device').checked
     : prev.rememberOnDevice !== false;
-
-  const passphraseTyped = $('#cfg-passphrase')?.value || '';
-  if (passphraseTyped) {
-    sessionPassphrase = passphraseTyped;
-  } else if (rememberOnDevice && prev.passphrase) {
-    sessionPassphrase = prev.passphrase;
-  } else if (!rememberOnDevice) {
-    sessionPassphrase = passphraseTyped;
-  }
 
   const encKey = $('#cfg-encryption-key')?.value?.trim();
   if (encKey) {
@@ -531,23 +388,14 @@ function readSettingsFromForm() {
 
   return saveSettingsPreservingSecrets(
     {
-      adapter: $('#cfg-adapter')?.value || 'local',
       rememberOnDevice,
-      passphrase: rememberOnDevice ? sessionPassphrase : '',
-      passphraseSet: Boolean(sessionPassphrase),
       encryptionKey: encKey || prev.encryptionKey || db.getEncryptionKey(),
-      googleClientId: $('#cfg-google-client')?.value.trim() || '',
-      webdavUrl: $('#cfg-webdav-url')?.value.trim() || '',
-      webdavUsername: $('#cfg-webdav-user')?.value.trim() || '',
-      // Blank secret inputs mean "keep saved" when remembering; otherwise clear.
-      webdavPassword: $('#cfg-webdav-pass')?.value || (rememberOnDevice ? '' : ''),
       s3Endpoint: $('#cfg-s3-endpoint')?.value.trim() || R2_DEFAULTS.endpoint,
       s3Region: $('#cfg-s3-region')?.value.trim() || R2_DEFAULTS.region,
       s3Bucket: $('#cfg-s3-bucket')?.value.trim() || R2_DEFAULTS.bucket,
       s3AccessKeyId: $('#cfg-s3-key')?.value.trim() || '',
       s3SecretAccessKey: $('#cfg-s3-secret')?.value || '',
       s3Prefix: $('#cfg-s3-prefix')?.value.trim() || R2_DEFAULTS.prefix,
-      s3ObjectKey: $('#cfg-s3-object')?.value.trim() || 'prompt2ui-vault.json',
       solebaseAutoSync: $('#cfg-solebase-autosync')
         ? $('#cfg-solebase-autosync').checked
         : true,
@@ -558,30 +406,23 @@ function readSettingsFromForm() {
 
 async function exportVault() {
   const collections = await db.exportSnapshot();
-  let payload = {
-    kind: 'prompt2ui-vault',
+  const payload = {
+    kind: 'solebase-notes-vault',
     exportedAt: new Date().toISOString(),
     data: collections,
   };
-  if (sessionPassphrase) {
-    payload = await encryptPayload(payload, sessionPassphrase);
-  }
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = `prompt2ui-vault-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `solebase-notes-vault-${new Date().toISOString().slice(0, 10)}.json`;
   a.click();
   URL.revokeObjectURL(a.href);
-  toastFn(sessionPassphrase ? 'Encrypted vault downloaded' : 'Vault downloaded', 'ok');
+  toastFn('Vault downloaded', 'ok');
 }
 
 async function importVault(file) {
   const text = await file.text();
-  let parsed = JSON.parse(text);
-  if (parsed.v && parsed.ciphertext) {
-    if (!sessionPassphrase) throw new Error('Enter passphrase in Settings to decrypt');
-    parsed = await decryptPayload(parsed, sessionPassphrase);
-  }
+  const parsed = JSON.parse(text);
   const data = parsed.data ?? parsed;
   await db.applyRemoteSnapshot(data);
   toastFn('Vault imported', 'ok');

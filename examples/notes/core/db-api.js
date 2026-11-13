@@ -37,9 +37,23 @@ let solebase = null;
 let initPromise = null;
 /** Fingerprint of last applied sync options (detect credential changes). */
 let lastSyncFingerprint = '';
+/** Serialize close→reopen so Sync Now never races a second OPFS worker. */
+let reopenGate = Promise.resolve();
 
 export function getAppId() {
   return APP_ID;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** OPFS AccessHandlePool throws this when a prior worker still holds the file. */
+function isOpfsContentionError(err) {
+  const msg = String(err?.message || err || '');
+  return /invalid state|Access Handle|NoModificationAllowed|database is locked|locking|already.*open/i.test(
+    msg
+  );
 }
 
 /**
@@ -135,6 +149,9 @@ function syncFingerprint(sync) {
 
 /**
  * Start Solebase (worker + OPFS). Idempotent until credentials change.
+ * Avoid force-reopen on every Sync Now — mobile WebKit throws
+ * "The object is in an invalid state" when a second AccessHandlePool races
+ * the previous worker's OPFS handles.
  * @param {{ force?: boolean }} [opts]
  * @returns {Promise<import('../../../packages/solebase/dist/index.js').Solebase>}
  */
@@ -142,45 +159,70 @@ export async function ready(opts = {}) {
   const sync = buildS3SyncConfig();
   const fp = syncFingerprint(sync);
 
-  if (solebase && !opts.force && fp === lastSyncFingerprint) {
-    return solebase;
-  }
+  // Always serialize through reopenGate so Sync Now never receives a worker
+  // that Save/bootstrap is in the middle of closing (OPFS InvalidStateError).
+  const run = async () => {
+    if (solebase && !opts.force && fp === lastSyncFingerprint) {
+      return solebase;
+    }
 
-  if (solebase && (opts.force || fp !== lastSyncFingerprint)) {
-    try {
-      await solebase.close();
-    } catch {
-      /* ignore close races */
+    if (solebase && (opts.force || fp !== lastSyncFingerprint)) {
+      try {
+        await solebase.close();
+      } catch {
+        /* ignore close races */
+      }
+      solebase = null;
+      initPromise = null;
+      // Give the browser time to release FileSystemSyncAccessHandle locks.
+      await sleep(180);
     }
-    solebase = null;
-    initPromise = null;
-  }
 
-  if (!initPromise) {
-    if (!globalThis.isSecureContext) {
-      throw new Error('Solebase needs a secure context (localhost or https)');
+    if (!initPromise) {
+      if (!globalThis.isSecureContext) {
+        throw new Error('Solebase needs a secure context (localhost or https)');
+      }
+      if (!navigator.storage?.getDirectory) {
+        throw new Error('OPFS is not available in this browser');
+      }
+      const workerUrl = new URL('../../../core/db-worker.js', import.meta.url);
+      const encryptionKey = getEncryptionKey();
+      /** @type {import('../../../packages/solebase/dist/index.js').SolebaseConfig} */
+      const config = {
+        appId: APP_ID,
+        encryptionKey,
+        workerUrl,
+      };
+      if (sync) {
+        config.sync = sync;
+      }
+
+      initPromise = (async () => {
+        const delays = [0, 200, 500, 1200, 2500];
+        let lastErr;
+        for (const delay of delays) {
+          if (delay) await sleep(delay);
+          try {
+            const instance = await Solebase.init(config);
+            solebase = instance;
+            lastSyncFingerprint = fp;
+            return instance;
+          } catch (err) {
+            lastErr = err;
+            if (!isOpfsContentionError(err)) throw err;
+            console.warn('[Solebase] OPFS reopen contention — retrying', err);
+          }
+        }
+        throw lastErr instanceof Error
+          ? lastErr
+          : new Error(String(lastErr || 'OPFS init failed'));
+      })();
     }
-    if (!navigator.storage?.getDirectory) {
-      throw new Error('OPFS is not available in this browser');
-    }
-    const workerUrl = new URL('../../../core/db-worker.js', import.meta.url);
-    const encryptionKey = getEncryptionKey();
-    /** @type {import('../../../packages/solebase/dist/index.js').SolebaseConfig} */
-    const config = {
-      appId: APP_ID,
-      encryptionKey,
-      workerUrl,
-    };
-    if (sync) {
-      config.sync = sync;
-    }
-    initPromise = Solebase.init(config).then((instance) => {
-      solebase = instance;
-      lastSyncFingerprint = fp;
-      return instance;
-    });
-  }
-  return initPromise;
+    return initPromise;
+  };
+
+  reopenGate = reopenGate.then(run, run);
+  return reopenGate;
 }
 
 /**
@@ -192,10 +234,12 @@ export async function reconfigure() {
 }
 
 /**
- * Layer 1 syncNow — no-op shaped result when sync is not configured.
+ * Layer 1 syncNow — reuses the live OPFS worker (no forced reopen).
  * @param {string} [reason]
  */
 export async function syncNow(reason = 'manual') {
+  // Never force-reconfigure here: Sync Now on phone was closing+reopening the
+  // AccessHandlePool worker and WebKit answered with InvalidStateError.
   const sb = await ready();
   if (!sb.getSync()) {
     return {
