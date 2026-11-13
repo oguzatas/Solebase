@@ -111,15 +111,21 @@ Legacy Drive / WebDAV / single-object S3 snapshot adapters remain under **Legacy
 | Markdown | GFM: headings, lists, fences, tables, blockquotes, tasks, images by URL |
 | Wiki-links | `[[Note Title]]` — open or create |
 | Search | Text, `#tag`, `path:folder` · quick switcher `Ctrl/Cmd+P` |
-| Vault | Nested folders, pin, right-click rename/delete/new |
+| Vault | Nested folders (`parentFolderId`), pin, right-click rename/move/delete/new subfolder |
 | Daily | Calendar → `YYYY-MM-DD` under `daily/` |
 | Shortcuts | `Ctrl/Cmd+S` save, `+N` new, `+P` switcher, `+O` vault, `Esc` closes |
 
-## Note shape
+## Note / folder shape
 
 ```js
-{ title, body, folder, tags: string[], pinned?: boolean, updatedAt?: number }
+// notes collection
+{ title, body, folderId: string|null, folder: string /* denormalized path */, tags: string[], pinned?: boolean, updatedAt?: number }
+
+// folders collection — tree via parentFolderId (null = vault root)
+{ name: string, parentFolderId: string|null, updatedAt?: number }
 ```
+
+Legacy `folders.path` / notes with only `folder` path strings migrate to `parentFolderId` / `folderId` on load. E2EE sync stays document-opaque (extra fields are fine).
 
 ## Out of scope
 

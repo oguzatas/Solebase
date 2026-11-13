@@ -5,8 +5,9 @@
  *   import { db } from '../core/db-api.js';
  *   await db.ready(); // Solebase.init → OPFS cr-sqlite
  *
- * Note shape: { title, body, folder, tags: string[], pinned?: boolean, updatedAt? }
- * Folder shape: { path: string }
+ * Note shape: { title, body, folderId?, folder?, tags: string[], pinned?: boolean, updatedAt? }
+ * Folder shape: { name, parentFolderId: string|null }  (legacy `path` migrated on load)
+ * Nesting: folders form a tree via parentFolderId; notes hang off folderId (or root).
  * Rich text: CodeMirror Markdown (Yjs doc API not wired in Layer 1 yet).
  */
 
@@ -69,6 +70,17 @@ function normalizeFolder(f) {
     .replace(/\/+/g, '/');
 }
 
+/** Single folder segment — no slashes. */
+function normalizeFolderName(name) {
+  return String(name || '')
+    .replace(/[\\/]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 80);
+}
+
+const MAX_FOLDER_DEPTH = 24;
+
 function fuzzyScore(query, text) {
   const q = query.toLowerCase();
   const t = text.toLowerCase();
@@ -122,16 +134,20 @@ export async function mount(root) {
   let unsubFolders = null;
   /** @type {object[]} */
   let cache = [];
-  /** @type {string[]} */
-  let folderPaths = [];
+  /** @type {object[]} */
+  let folderRows = [];
+  /** @type {Map<string, object>} */
+  let folderById = new Map();
+  /** Collapsed folder ids */
   let treeCollapsed = new Set();
   /** @type {EditorView|null} */
   let cmView = null;
   let applyingDoc = false;
   let vaultOpen = false;
   let contextOpen = false;
-  /** @type {{ kind: 'note'|'folder'|'blank', id?: string, path?: string } | null} */
+  /** @type {{ kind: 'note'|'folder'|'blank', id?: string } | null} */
   let menuTarget = null;
+  let folderMigrateBusy = false;
 
   root.innerHTML = `
     <div class="vault" data-app="notes">
@@ -173,7 +189,7 @@ export async function mount(root) {
       </header>
 
       <div class="vault-meta" id="n-meta">
-        <input type="text" id="n-folder" placeholder="path/folder" maxlength="120" list="n-folder-list" />
+        <input type="text" id="n-folder" placeholder="folder/nested/path" maxlength="200" list="n-folder-list" title="Folder path — nested with /" />
         <datalist id="n-folder-list"></datalist>
         <input type="text" id="n-tags" placeholder="tags" maxlength="160" />
         <span class="vault-save-hint" id="n-hint">Ready</span>
@@ -237,9 +253,10 @@ export async function mount(root) {
 
     <div class="ctx-menu" id="ctx-menu" hidden role="menu">
       <button type="button" role="menuitem" data-act="rename">Rename</button>
+      <button type="button" role="menuitem" data-act="move">Move…</button>
       <button type="button" role="menuitem" data-act="delete">Delete</button>
       <button type="button" role="menuitem" data-act="new-note">New note here</button>
-      <button type="button" role="menuitem" data-act="new-folder">New folder</button>
+      <button type="button" role="menuitem" data-act="new-folder">New subfolder</button>
     </div>
 
     <div class="switcher-backdrop" id="switcher-backdrop" hidden></div>
@@ -330,10 +347,111 @@ export async function mount(root) {
     return collectTags(n.body || '', Array.isArray(n.tags) ? n.tags : []);
   }
 
+  function indexFolders(rows) {
+    folderRows = Array.isArray(rows) ? rows.slice() : [];
+    folderById = new Map();
+    for (const row of folderRows) {
+      if (row?.id) folderById.set(row.id, row);
+    }
+  }
+
+  function upsertFolderLocal(row) {
+    if (!row?.id) return;
+    const i = folderRows.findIndex((f) => f.id === row.id);
+    if (i >= 0) folderRows[i] = { ...folderRows[i], ...row };
+    else folderRows.push(row);
+    folderById.set(row.id, i >= 0 ? folderRows[i] : folderRows[folderRows.length - 1]);
+  }
+
+  function folderDepth(id) {
+    let depth = 0;
+    let cur = folderById.get(id);
+    const seen = new Set();
+    while (cur && depth < MAX_FOLDER_DEPTH) {
+      if (seen.has(cur.id)) break;
+      seen.add(cur.id);
+      depth += 1;
+      const pid = cur.parentFolderId || null;
+      if (!pid) break;
+      cur = folderById.get(pid);
+    }
+    return depth;
+  }
+
+  function folderPathById(id) {
+    if (!id || !folderById.has(id)) return '';
+    const parts = [];
+    let cur = folderById.get(id);
+    const seen = new Set();
+    while (cur && parts.length < MAX_FOLDER_DEPTH) {
+      if (seen.has(cur.id)) break;
+      seen.add(cur.id);
+      const name = normalizeFolderName(cur.name) || normalizeFolder(cur.path).split('/').pop() || 'Folder';
+      parts.push(name);
+      const pid = cur.parentFolderId || null;
+      if (!pid) break;
+      cur = folderById.get(pid);
+    }
+    return parts.reverse().join('/');
+  }
+
+  function isFolderUnder(folderId, ancestorId) {
+    if (!folderId || !ancestorId) return false;
+    let cur = folderById.get(folderId);
+    const seen = new Set();
+    while (cur) {
+      if (cur.id === ancestorId) return true;
+      if (seen.has(cur.id)) return false;
+      seen.add(cur.id);
+      const pid = cur.parentFolderId || null;
+      if (!pid) return false;
+      cur = folderById.get(pid);
+    }
+    return false;
+  }
+
+  function findChildFolder(parentId, name) {
+    const want = normalizeFolderName(name).toLowerCase();
+    if (!want) return null;
+    return (
+      folderRows.find((f) => {
+        const pid = f.parentFolderId || null;
+        if (pid !== (parentId || null)) return false;
+        const n = normalizeFolderName(f.name) || normalizeFolder(f.path).split('/').pop() || '';
+        return n.toLowerCase() === want;
+      }) || null
+    );
+  }
+
+  function findFolderByPath(path) {
+    const p = normalizeFolder(path);
+    if (!p) return null;
+    for (const f of folderRows) {
+      if (folderPathById(f.id) === p) return f;
+      if (normalizeFolder(f.path) === p) return f;
+    }
+    return null;
+  }
+
+  function noteFolderId(n) {
+    if (n?.folderId && folderById.has(n.folderId)) return n.folderId;
+    return null;
+  }
+
+  function noteFolderPath(n) {
+    const id = noteFolderId(n);
+    if (id) return folderPathById(id);
+    return normalizeFolder(n?.folder);
+  }
+
   function allFolderPaths() {
-    const set = new Set(folderPaths.map(normalizeFolder).filter(Boolean));
+    const set = new Set();
+    for (const f of folderRows) {
+      const p = folderPathById(f.id) || normalizeFolder(f.path);
+      if (p) set.add(p);
+    }
     for (const n of cache) {
-      const f = normalizeFolder(n.folder);
+      const f = noteFolderPath(n);
       if (!f) continue;
       set.add(f);
       const parts = f.split('/');
@@ -343,7 +461,23 @@ export async function mount(root) {
         set.add(acc);
       }
     }
-    return [...set].sort();
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }
+
+  function descendantFolderIds(rootId) {
+    const out = new Set([rootId]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const f of folderRows) {
+        const pid = f.parentFolderId || null;
+        if (pid && out.has(pid) && !out.has(f.id)) {
+          out.add(f.id);
+          changed = true;
+        }
+      }
+    }
+    return out;
   }
 
   function filtered() {
@@ -351,7 +485,7 @@ export async function mount(root) {
     return cache
       .filter((n) => {
         if (path) {
-          const folder = normalizeFolder(n.folder).toLowerCase();
+          const folder = noteFolderPath(n).toLowerCase();
           if (!(folder === path || folder.startsWith(`${path}/`))) return false;
         }
         if (tags.length) {
@@ -359,7 +493,7 @@ export async function mount(root) {
           if (!tags.every((t) => noteTags.includes(t))) return false;
         }
         if (!text) return true;
-        const hay = `${n.title || ''} ${n.body || ''} ${n.folder || ''} ${(n.tags || []).join(' ')}`.toLowerCase();
+        const hay = `${n.title || ''} ${n.body || ''} ${noteFolderPath(n)} ${(n.tags || []).join(' ')}`.toLowerCase();
         return hay.includes(text);
       })
       .sort((a, b) => {
@@ -382,36 +516,45 @@ export async function mount(root) {
   }
 
   function buildTree(rows) {
-    const rootNode = { name: '', path: '', children: new Map(), notes: [] };
+    const rootNode = { id: null, name: '', children: [], notes: [] };
+    /** @type {Map<string|null, typeof rootNode>} */
+    const nodes = new Map([[null, rootNode]]);
 
-    function ensureFolder(path) {
-      if (!path) return rootNode;
-      const parts = path.split('/');
-      let node = rootNode;
-      let acc = '';
-      for (const part of parts) {
-        acc = acc ? `${acc}/${part}` : part;
-        if (!node.children.has(part)) {
-          node.children.set(part, { name: part, path: acc, children: new Map(), notes: [] });
-        }
-        node = node.children.get(part);
-      }
-      return node;
+    for (const f of folderRows) {
+      const name =
+        normalizeFolderName(f.name) ||
+        normalizeFolder(f.path).split('/').pop() ||
+        'Folder';
+      nodes.set(f.id, { id: f.id, name, children: [], notes: [] });
     }
 
-    for (const path of allFolderPaths()) ensureFolder(path);
-    for (const n of rows) ensureFolder(normalizeFolder(n.folder)).notes.push(n);
+    for (const f of folderRows) {
+      const node = nodes.get(f.id);
+      if (!node) continue;
+      let pid = f.parentFolderId || null;
+      if (pid && (!nodes.has(pid) || pid === f.id || isFolderUnder(pid, f.id))) {
+        pid = null;
+      }
+      nodes.get(pid).children.push(node);
+    }
+
+    for (const n of rows) {
+      const fid = noteFolderId(n);
+      const parent = fid && nodes.has(fid) ? nodes.get(fid) : rootNode;
+      parent.notes.push(n);
+    }
     return rootNode;
   }
 
   function renderTreeNode(node, depth = 0) {
+    if (depth > MAX_FOLDER_DEPTH) return '';
     const parts = [];
-    const folders = [...node.children.values()].sort((a, b) => a.name.localeCompare(b.name));
+    const folders = node.children.slice().sort((a, b) => a.name.localeCompare(b.name));
     for (const folder of folders) {
-      const collapsed = treeCollapsed.has(folder.path);
+      const collapsed = treeCollapsed.has(folder.id);
       parts.push(`
-        <div class="tree-folder">
-          <button type="button" class="tree-folder-btn" style="--depth:${depth}" data-toggle-folder="${escapeHtml(folder.path)}" data-folder-path="${escapeHtml(folder.path)}" aria-expanded="${collapsed ? 'false' : 'true'}">
+        <div class="tree-folder" data-folder-id="${escapeHtml(folder.id)}">
+          <button type="button" class="tree-folder-btn" style="--depth:${depth}" data-toggle-folder="${escapeHtml(folder.id)}" data-folder-id="${escapeHtml(folder.id)}" aria-expanded="${collapsed ? 'false' : 'true'}">
             <span class="tree-chevron">${collapsed ? '▸' : '▾'}</span>
             <span class="tree-folder-name">${escapeHtml(folder.name)}</span>
           </button>
@@ -445,7 +588,7 @@ export async function mount(root) {
   function renderTree() {
     const rows = filtered();
     const parsed = parseQuery(query);
-    if (!rows.length && !allFolderPaths().length) {
+    if (!rows.length && !folderRows.length) {
       treeEl.innerHTML = `<p class="tree-empty">Empty vault. New note or folder to start.</p>`;
       return;
     }
@@ -458,7 +601,7 @@ export async function mount(root) {
         .map((n) => {
           const active = n.id === activeId ? ' is-active' : '';
           const pin = n.pinned ? '<span class="tree-pin" title="Pinned">★</span>' : '';
-          const folder = normalizeFolder(n.folder);
+          const folder = noteFolderPath(n);
           return `
             <button type="button" class="tree-note${active}" data-id="${n.id}" style="--depth:0" role="treeitem">
               <span class="tree-note-title">${pin}${escapeHtml(n.title || 'Untitled')}</span>
@@ -686,7 +829,7 @@ export async function mount(root) {
     }
     showEditor(true);
     titleEl.value = note.title || '';
-    folderEl.value = note.folder || '';
+    folderEl.value = noteFolderPath(note);
     tagsEl.value = (Array.isArray(note.tags) ? note.tags : []).join(', ');
     setBody(note.body || '');
     pinBtn.classList.toggle('is-on', !!note.pinned);
@@ -716,42 +859,81 @@ export async function mount(root) {
       .map((t) => t.trim().toLowerCase())
       .filter(Boolean);
     const tags = collectTags(body, explicit);
+    const folderPath = normalizeFolder(folderEl.value);
+    const folderId = folderPath ? await ensureFolderPath(folderPath) : null;
     const patch = {
       title: titleEl.value.trim() || 'Untitled',
       body,
-      folder: normalizeFolder(folderEl.value),
+      folderId,
+      folder: folderPath,
       tags,
       pinned: !!pinBtn.classList.contains('is-on'),
     };
     patchCache(activeId, patch);
     renderTree();
     await notes.update(activeId, patch);
-    if (patch.folder) await ensureFolderRecord(patch.folder);
     hintEl.textContent = 'Saved';
     refreshPreview();
     refreshSidePanels();
   }
 
-  async function ensureFolderRecord(path) {
+  /**
+   * Ensure nested folders exist for a path like "a/b/c".
+   * Returns the leaf folder id (or null for root / empty).
+   * @param {string} path
+   * @returns {Promise<string|null>}
+   */
+  async function ensureFolderPath(path) {
     const p = normalizeFolder(path);
-    if (!p) return;
-    if (folderPaths.includes(p)) return;
-    const parts = p.split('/');
-    let acc = '';
-    for (const part of parts) {
-      acc = acc ? `${acc}/${part}` : part;
-      if (!folderPaths.includes(acc)) {
-        await foldersCol.add({ path: acc });
+    if (!p) return null;
+    const parts = p.split('/').map(normalizeFolderName).filter(Boolean);
+    if (!parts.length) return null;
+    if (parts.length > MAX_FOLDER_DEPTH) {
+      throw new Error(`Folder nesting is limited to ${MAX_FOLDER_DEPTH} levels`);
+    }
+
+    let parentId = null;
+    for (const name of parts) {
+      let existing = findChildFolder(parentId, name);
+      if (!existing) {
+        const acc = parentId ? `${folderPathById(parentId)}/${name}` : name;
+        existing = findFolderByPath(acc);
+      }
+      if (existing) {
+        const needName = normalizeFolderName(existing.name) !== name;
+        const needParent = (existing.parentFolderId || null) !== parentId;
+        if (needName || needParent) {
+          const updated = await foldersCol.update(existing.id, {
+            name,
+            parentFolderId: parentId,
+          });
+          upsertFolderLocal(updated || { ...existing, name, parentFolderId: parentId });
+        }
+        parentId = existing.id;
+      } else {
+        const row = await foldersCol.add({ name, parentFolderId: parentId });
+        upsertFolderLocal(row);
+        parentId = row.id;
       }
     }
+    return parentId;
   }
 
   async function createNote(seed = {}) {
-    const folder = normalizeFolder(seed.folder || '');
-    if (folder) await ensureFolderRecord(folder);
+    let folderId = seed.folderId || null;
+    let folder = normalizeFolder(seed.folder || '');
+    if (folderId && folderById.has(folderId)) {
+      folder = folderPathById(folderId);
+    } else if (folder) {
+      folderId = await ensureFolderPath(folder);
+    } else {
+      folderId = null;
+      folder = '';
+    }
     const row = await notes.add({
       title: seed.title || 'Untitled',
       body: seed.body || '',
+      folderId,
       folder,
       tags: seed.tags || [],
       pinned: !!seed.pinned,
@@ -760,7 +942,7 @@ export async function mount(root) {
     clearTimeout(saveTimer);
     showEditor(true);
     titleEl.value = row.title || 'Untitled';
-    folderEl.value = row.folder || '';
+    folderEl.value = folderPathById(row.folderId) || row.folder || '';
     tagsEl.value = (Array.isArray(row.tags) ? row.tags : []).join(', ');
     setBody(row.body || '');
     pinBtn.classList.toggle('is-on', !!row.pinned);
@@ -769,14 +951,43 @@ export async function mount(root) {
     return row;
   }
 
-  async function createFolder(pathHint = '') {
-    const raw = window.prompt('Folder path', pathHint || 'projects');
+  /**
+   * @param {string|null} [parentId]
+   * @param {string} [nameHint]
+   */
+  async function createFolder(parentId = null, nameHint = '') {
+    const parentPath = parentId ? folderPathById(parentId) : '';
+    const raw = window.prompt(
+      parentPath ? `New folder inside “${parentPath}”` : 'New folder name (use / for nested)',
+      nameHint || 'New folder',
+    );
     if (raw == null) return;
-    const path = normalizeFolder(raw);
-    if (!path) return;
-    await ensureFolderRecord(path);
-    treeCollapsed.delete(path);
+    const trimmed = String(raw).trim();
+    if (!trimmed) return;
+
+    let id = null;
+    if (/[\\/]/.test(trimmed)) {
+      const full = parentPath ? `${parentPath}/${normalizeFolder(trimmed)}` : normalizeFolder(trimmed);
+      id = await ensureFolderPath(full);
+    } else {
+      const name = normalizeFolderName(trimmed);
+      if (!name) return;
+      const existing = findChildFolder(parentId, name);
+      if (existing) {
+        id = existing.id;
+      } else if (parentId && folderDepth(parentId) >= MAX_FOLDER_DEPTH) {
+        window.alert(`Folder nesting is limited to ${MAX_FOLDER_DEPTH} levels`);
+        return;
+      } else {
+        const row = await foldersCol.add({ name, parentFolderId: parentId || null });
+        upsertFolderLocal(row);
+        id = row.id;
+      }
+    }
+    if (id) treeCollapsed.delete(id);
+    if (parentId) treeCollapsed.delete(parentId);
     setVaultOpen(true);
+    renderTree();
   }
 
   async function renameNote(id) {
@@ -792,43 +1003,115 @@ export async function mount(root) {
     hintEl.textContent = 'Saved';
   }
 
-  async function renameFolder(path) {
-    const next = window.prompt('Rename folder path', path);
+  async function renameFolder(id) {
+    const folder = folderById.get(id);
+    if (!folder) return;
+    const current =
+      normalizeFolderName(folder.name) || normalizeFolder(folder.path).split('/').pop() || 'Folder';
+    const next = window.prompt('Rename folder', current);
     if (next == null) return;
-    const newPath = normalizeFolder(next);
-    if (!newPath || newPath === path) return;
-
-    const affected = cache.filter((n) => {
-      const f = normalizeFolder(n.folder);
-      return f === path || f.startsWith(`${path}/`);
-    });
-    for (const n of affected) {
-      const f = normalizeFolder(n.folder);
-      const updated = f === path ? newPath : `${newPath}${f.slice(path.length)}`;
-      patchCache(n.id, { folder: updated });
-      await notes.update(n.id, { folder: updated });
+    const name = normalizeFolderName(next);
+    if (!name || name === current) return;
+    const sibling = findChildFolder(folder.parentFolderId || null, name);
+    if (sibling && sibling.id !== id) {
+      window.alert(`A folder named “${name}” already exists here`);
+      return;
     }
-
-    const folderRows = await foldersCol.get();
-    for (const row of folderRows) {
-      const f = normalizeFolder(row.path);
-      if (f === path || f.startsWith(`${path}/`)) {
-        const updated = f === path ? newPath : `${newPath}${f.slice(path.length)}`;
-        await foldersCol.update(row.id, { path: updated });
-      }
-    }
-    await ensureFolderRecord(newPath);
+    const updated = await foldersCol.update(id, { name });
+    upsertFolderLocal(updated || { ...folder, name });
+    await refreshNoteFolderPaths(descendantFolderIds(id));
     if (activeId) {
       const active = cache.find((n) => n.id === activeId);
-      if (active) folderEl.value = active.folder || '';
+      if (active) folderEl.value = noteFolderPath(active);
     }
     renderTree();
+    refreshFolderList();
   }
 
-  async function deleteFolder(path) {
+  /** Keep denormalized note.folder paths in sync after folder renames/moves. */
+  async function refreshNoteFolderPaths(folderIdSet) {
+    for (const n of cache) {
+      const fid = noteFolderId(n);
+      if (!fid || !folderIdSet.has(fid)) continue;
+      const path = folderPathById(fid);
+      if (normalizeFolder(n.folder) === path) continue;
+      patchCache(n.id, { folder: path, folderId: fid });
+      await notes.update(n.id, { folder: path, folderId: fid });
+    }
+  }
+
+  async function moveFolder(id) {
+    const folder = folderById.get(id);
+    if (!folder) return;
+    const currentParent = folder.parentFolderId ? folderPathById(folder.parentFolderId) : '';
+    const raw = window.prompt(
+      'Move folder under path (empty = vault root)',
+      currentParent,
+    );
+    if (raw == null) return;
+    const destPath = normalizeFolder(raw);
+    let newParentId = null;
+    if (destPath) {
+      newParentId = await ensureFolderPath(destPath);
+    }
+    if (newParentId === id || (newParentId && isFolderUnder(newParentId, id))) {
+      window.alert('Cannot move a folder into itself');
+      return;
+    }
+    if (newParentId && folderDepth(newParentId) + 1 > MAX_FOLDER_DEPTH) {
+      window.alert(`Folder nesting is limited to ${MAX_FOLDER_DEPTH} levels`);
+      return;
+    }
+    const name =
+      normalizeFolderName(folder.name) || normalizeFolder(folder.path).split('/').pop() || 'Folder';
+    const clash = findChildFolder(newParentId, name);
+    if (clash && clash.id !== id) {
+      window.alert(`A folder named “${name}” already exists in the destination`);
+      return;
+    }
+    const updated = await foldersCol.update(id, { parentFolderId: newParentId });
+    upsertFolderLocal(updated || { ...folder, parentFolderId: newParentId });
+    await refreshNoteFolderPaths(descendantFolderIds(id));
+    if (activeId) {
+      const active = cache.find((n) => n.id === activeId);
+      if (active) folderEl.value = noteFolderPath(active);
+    }
+    renderTree();
+    refreshFolderList();
+  }
+
+  async function moveNote(id) {
+    const note = cache.find((n) => n.id === id);
+    if (!note) return;
+    const raw = window.prompt(
+      'Move note to folder path (empty = vault root)',
+      noteFolderPath(note),
+    );
+    if (raw == null) return;
+    const folderPath = normalizeFolder(raw);
+    const folderId = folderPath ? await ensureFolderPath(folderPath) : null;
+    const patch = { folderId, folder: folderPath };
+    patchCache(id, patch);
+    if (id === activeId) folderEl.value = folderPath;
+    renderTree();
+    await notes.update(id, patch);
+    hintEl.textContent = 'Saved';
+  }
+
+  async function deleteFolder(id) {
+    const folder = folderById.get(id);
+    if (!folder) return;
+    const path =
+      folderPathById(id) ||
+      normalizeFolder(folder.path) ||
+      normalizeFolderName(folder.name) ||
+      'folder';
+    const ids = descendantFolderIds(id);
     const affected = cache.filter((n) => {
-      const f = normalizeFolder(n.folder);
-      return f === path || f.startsWith(`${path}/`);
+      const fid = noteFolderId(n);
+      if (fid && ids.has(fid)) return true;
+      const fp = normalizeFolder(n.folder);
+      return fp === path || fp.startsWith(`${path}/`);
     });
     if (affected.length) {
       if (!confirm(`Delete folder “${path}” and ${affected.length} note(s)?`)) return;
@@ -836,15 +1119,76 @@ export async function mount(root) {
         if (n.id === activeId) activeId = null;
         await notes.remove(n.id);
       }
-    } else if (!confirm(`Remove empty folder “${path}”?`)) {
+    } else if (!confirm(`Remove folder “${path}” and its subfolders?`)) {
       return;
     }
-    const folderRows = await foldersCol.get();
-    for (const row of folderRows) {
-      const f = normalizeFolder(row.path);
-      if (f === path || f.startsWith(`${path}/`)) {
-        await foldersCol.remove(row.id);
+    const ordered = [...ids].sort((a, b) => folderDepth(b) - folderDepth(a));
+    for (const fid of ordered) {
+      await foldersCol.remove(fid);
+      folderById.delete(fid);
+      folderRows = folderRows.filter((f) => f.id !== fid);
+      treeCollapsed.delete(fid);
+    }
+    renderTree();
+    refreshFolderList();
+  }
+
+  /** Migrate legacy path-only folders + notes.folder → parentFolderId / folderId. */
+  async function migrateLegacyFolderSchema() {
+    if (folderMigrateBusy) return;
+    folderMigrateBusy = true;
+    try {
+      const legacyFolders = folderRows
+        .filter((f) => {
+          const hasName = Boolean(normalizeFolderName(f.name));
+          const hasParentField = Object.prototype.hasOwnProperty.call(f, 'parentFolderId');
+          const path = normalizeFolder(f.path);
+          return path && (!hasName || !hasParentField);
+        })
+        .slice()
+        .sort(
+          (a, b) =>
+            normalizeFolder(a.path).split('/').length - normalizeFolder(b.path).split('/').length,
+        );
+
+      for (const row of legacyFolders) {
+        const path = normalizeFolder(row.path);
+        const parts = path.split('/').map(normalizeFolderName).filter(Boolean);
+        if (!parts.length) continue;
+        const name = parts[parts.length - 1];
+        const parentPath = parts.slice(0, -1).join('/');
+        let parentFolderId = null;
+        if (parentPath) {
+          parentFolderId = (await ensureFolderPath(parentPath)) || null;
+          if (parentFolderId === row.id) parentFolderId = null;
+        }
+        const updated = await foldersCol.update(row.id, { name, parentFolderId });
+        upsertFolderLocal(updated || { ...row, name, parentFolderId });
       }
+
+      for (const n of cache) {
+        if (n.folderId && folderById.has(n.folderId)) {
+          const path = folderPathById(n.folderId);
+          if (normalizeFolder(n.folder) !== path) {
+            patchCache(n.id, { folder: path });
+            await notes.update(n.id, { folder: path, folderId: n.folderId });
+          }
+          continue;
+        }
+        const path = normalizeFolder(n.folder);
+        if (!path) {
+          if (n.folderId) {
+            patchCache(n.id, { folderId: null, folder: '' });
+            await notes.update(n.id, { folderId: null, folder: '' });
+          }
+          continue;
+        }
+        const folderId = await ensureFolderPath(path);
+        patchCache(n.id, { folderId, folder: path });
+        await notes.update(n.id, { folderId, folder: path });
+      }
+    } finally {
+      folderMigrateBusy = false;
     }
   }
 
@@ -877,6 +1221,9 @@ export async function mount(root) {
       activeId = filtered()[0]?.id || cache[0].id;
     }
     renderTree();
+    void migrateLegacyFolderSchema().catch((err) => {
+      console.warn('[notes] folder migrate failed', err);
+    });
     const note = cache.find((n) => n.id === activeId);
     if (!note) {
       showEditor(false);
@@ -902,9 +1249,12 @@ export async function mount(root) {
   }
 
   function paintFolders(rows) {
-    folderPaths = rows.map((r) => normalizeFolder(r.path)).filter(Boolean);
+    indexFolders(rows);
     refreshFolderList();
     renderTree();
+    void migrateLegacyFolderSchema().catch((err) => {
+      console.warn('[notes] folder migrate failed', err);
+    });
   }
 
   function hideCtxMenu() {
@@ -917,18 +1267,23 @@ export async function mount(root) {
   function showCtxMenu(x, y, target) {
     menuTarget = target;
     const renameBtn = ctxMenu.querySelector('[data-act="rename"]');
+    const moveBtn = ctxMenu.querySelector('[data-act="move"]');
     const deleteBtn = ctxMenu.querySelector('[data-act="delete"]');
+    const newFolderBtn = ctxMenu.querySelector('[data-act="new-folder"]');
     renameBtn.hidden = !(target.kind === 'note' || target.kind === 'folder');
+    moveBtn.hidden = !(target.kind === 'note' || target.kind === 'folder');
     deleteBtn.hidden = !(target.kind === 'note' || target.kind === 'folder');
     renameBtn.textContent = target.kind === 'folder' ? 'Rename folder' : 'Rename';
+    moveBtn.textContent = target.kind === 'folder' ? 'Move folder…' : 'Move note…';
     deleteBtn.textContent = target.kind === 'folder' ? 'Delete folder' : 'Delete';
+    newFolderBtn.textContent = target.kind === 'folder' ? 'New subfolder' : 'New folder';
 
     if (ctxMenu.parentElement !== document.body) document.body.appendChild(ctxMenu);
     ctxMenu.hidden = false;
     menuGuardUntil = Date.now() + 400;
     const rect = ctxMenu.getBoundingClientRect();
     const left = Math.min(x, window.innerWidth - Math.max(rect.width, 180) - 8);
-    const top = Math.min(y, window.innerHeight - Math.max(rect.height, 160) - 8);
+    const top = Math.min(y, window.innerHeight - Math.max(rect.height, 180) - 8);
     ctxMenu.style.left = `${Math.max(8, left)}px`;
     ctxMenu.style.top = `${Math.max(8, top)}px`;
   }
@@ -1010,7 +1365,7 @@ export async function mount(root) {
     switcherRows = cache
       .map((n) => ({
         n,
-        score: fuzzyScore(q, `${n.title || ''} ${n.folder || ''}`),
+        score: fuzzyScore(q, `${n.title || ''} ${noteFolderPath(n)}`),
       }))
       .filter((x) => x.score > 0)
       .sort((a, b) => b.score - a.score || (b.n.updatedAt || 0) - (a.n.updatedAt || 0))
@@ -1025,7 +1380,7 @@ export async function mount(root) {
     switcherList.innerHTML = switcherRows
       .map((n, i) => {
         const sel = i === switcherIndex ? ' is-selected' : '';
-        const folder = normalizeFolder(n.folder);
+        const folder = noteFolderPath(n);
         return `<li class="switcher-item${sel}" data-index="${i}" data-id="${n.id}">
           <span class="switcher-title">${escapeHtml(n.title || 'Untitled')}</span>
           <span class="switcher-meta">${escapeHtml(folder || 'root')}</span>
@@ -1072,13 +1427,13 @@ export async function mount(root) {
     hideCtxMenu();
     const toggle = e.target.closest('[data-toggle-folder]');
     if (toggle) {
-      const path = toggle.getAttribute('data-toggle-folder');
-      if (treeCollapsed.has(path)) treeCollapsed.delete(path);
-      else treeCollapsed.add(path);
+      const id = toggle.getAttribute('data-toggle-folder');
+      if (treeCollapsed.has(id)) treeCollapsed.delete(id);
+      else treeCollapsed.add(id);
       renderTree();
       return;
     }
-    const btn = e.target.closest('[data-id]');
+    const btn = e.target.closest('.tree-note[data-id]');
     if (!btn) return;
     if (activeId) await persistActive();
     activeId = btn.getAttribute('data-id');
@@ -1090,7 +1445,7 @@ export async function mount(root) {
 
   treeEl.addEventListener('contextmenu', (e) => {
     const noteBtn = e.target.closest('.tree-note[data-id]');
-    const folderBtn = e.target.closest('[data-folder-path]');
+    const folderBtn = e.target.closest('[data-folder-id]');
     e.preventDefault();
     if (noteBtn) {
       showCtxMenu(e.clientX, e.clientY, { kind: 'note', id: noteBtn.getAttribute('data-id') });
@@ -1099,7 +1454,7 @@ export async function mount(root) {
     if (folderBtn) {
       showCtxMenu(e.clientX, e.clientY, {
         kind: 'folder',
-        path: folderBtn.getAttribute('data-folder-path'),
+        id: folderBtn.getAttribute('data-folder-id'),
       });
       return;
     }
@@ -1116,25 +1471,30 @@ export async function mount(root) {
     if (act === 'rename' && target.kind === 'note') {
       await renameNote(target.id);
     } else if (act === 'rename' && target.kind === 'folder') {
-      await renameFolder(target.path);
+      await renameFolder(target.id);
+    } else if (act === 'move' && target.kind === 'note') {
+      await moveNote(target.id);
+    } else if (act === 'move' && target.kind === 'folder') {
+      await moveFolder(target.id);
     } else if (act === 'delete' && target.kind === 'note') {
       const note = cache.find((n) => n.id === target.id);
       if (!confirm(`Delete “${note?.title || 'note'}”?`)) return;
       if (activeId === target.id) activeId = null;
       await notes.remove(target.id);
     } else if (act === 'delete' && target.kind === 'folder') {
-      await deleteFolder(target.path);
+      await deleteFolder(target.id);
     } else if (act === 'new-note') {
       clearTimeout(saveTimer);
       if (activeId && boundNoteId === activeId) await persistActive();
-      const folder = target.kind === 'folder' ? target.path : '';
-      await createNote({ title: 'Untitled', folder, body: '', tags: [] });
+      const folderId = target.kind === 'folder' ? target.id : null;
+      const folder = folderId ? folderPathById(folderId) : '';
+      await createNote({ title: 'Untitled', folderId, folder, body: '', tags: [] });
       setVaultOpen(true);
       titleEl.focus();
       titleEl.select();
     } else if (act === 'new-folder') {
-      const base = target.kind === 'folder' ? `${target.path}/` : '';
-      await createFolder(base);
+      const parentId = target.kind === 'folder' ? target.id : null;
+      await createFolder(parentId);
     }
   });
 
@@ -1174,14 +1534,15 @@ export async function mount(root) {
 
   async function onDailyNote() {
     const title = todayTitle();
+    const dailyId = await ensureFolderPath('daily');
     const existing = findByTitle(title);
     if (existing) {
       if (activeId) await persistActive();
       activeId = existing.id;
-      if (normalizeFolder(existing.folder) !== 'daily') {
-        patchCache(existing.id, { folder: 'daily' });
-        await notes.update(existing.id, { folder: 'daily' });
-        await ensureFolderRecord('daily');
+      if (noteFolderId(existing) !== dailyId || noteFolderPath(existing) !== 'daily') {
+        const patch = { folderId: dailyId, folder: 'daily' };
+        patchCache(existing.id, patch);
+        await notes.update(existing.id, patch);
       }
       renderTree();
       loadActive();
@@ -1190,6 +1551,7 @@ export async function mount(root) {
     if (activeId) await persistActive();
     await createNote({
       title,
+      folderId: dailyId,
       folder: 'daily',
       tags: ['daily'],
       body: `# ${title}\n\n## Notes\n\n- [ ] \n\n## Log\n\n`,
@@ -1215,8 +1577,8 @@ export async function mount(root) {
 
   root.querySelector('#n-new').addEventListener('click', onNewNote);
   root.querySelector('#n-drawer-new').addEventListener('click', onNewNote);
-  root.querySelector('#n-new-folder').addEventListener('click', () => createFolder(''));
-  root.querySelector('#n-drawer-folder').addEventListener('click', () => createFolder(''));
+  root.querySelector('#n-new-folder').addEventListener('click', () => createFolder(null));
+  root.querySelector('#n-drawer-folder').addEventListener('click', () => createFolder(null));
   root.querySelector('#n-daily').addEventListener('click', () => {
     void onDailyNote();
   });
@@ -1245,7 +1607,7 @@ export async function mount(root) {
     if (!(btn instanceof HTMLElement)) return;
     const act = btn.getAttribute('data-bar-act');
     setMoreOpen(false);
-    if (act === 'new-folder') createFolder('');
+    if (act === 'new-folder') createFolder(null);
     else if (act === 'daily') void onDailyNote();
     else if (act === 'delete') void onDeleteNote();
     else if (act === 'pin') onTogglePin();
@@ -1266,7 +1628,8 @@ export async function mount(root) {
 
   folderEl.addEventListener('input', () => {
     if (!activeId) return;
-    patchCache(activeId, { folder: normalizeFolder(folderEl.value) });
+    const folder = normalizeFolder(folderEl.value);
+    patchCache(activeId, { folder, folderId: noteFolderId(cache.find((n) => n.id === activeId)) });
     renderTree();
     scheduleSave();
   });

@@ -124,7 +124,7 @@ async function main() {
       process.exit(1);
     }
 
-    // Prove Solebase OPFS insert from the same origin
+    // Prove Solebase OPFS insert + nested folder parentFolderId from the same origin
     const probe = await page.evaluate(async () => {
       const { Solebase } = await import('/packages/solebase/dist/index.js');
       const db = await Solebase.init({
@@ -133,12 +133,33 @@ async function main() {
         workerUrl: new URL('/core/db-worker.js', location.href),
         filename: 'solebase-notes-ui-smoke.db',
       });
-      const col = db.collection('notes');
-      const row = await col.insert({ title: 'Smoke', body: 'ok', folder: '', tags: [] });
-      const found = await col.findById(row.id);
+      const notes = db.collection('notes');
+      const folders = db.collection('folders');
+      const parent = await folders.insert({ name: 'projects', parentFolderId: null });
+      const child = await folders.insert({ name: 'active', parentFolderId: parent.id });
+      const row = await notes.insert({
+        title: 'Smoke',
+        body: 'ok',
+        folderId: child.id,
+        folder: 'projects/active',
+        tags: [],
+      });
+      const found = await notes.findById(row.id);
+      const childFound = await folders.findById(child.id);
       await db.close();
-      return { id: row.id, title: found?.title };
+      return {
+        id: row.id,
+        title: found?.title,
+        folderId: found?.folderId,
+        childParent: childFound?.parentFolderId,
+        nestedOk: childFound?.parentFolderId === parent.id && found?.folderId === child.id,
+      };
     });
+
+    if (!probe.nestedOk) {
+      console.error('SMOKE_NOTES_FAIL: nested folder schema probe failed', probe);
+      process.exit(1);
+    }
 
     console.log('SMOKE_NOTES_SOLEBASE_OK');
     console.log(JSON.stringify({ state, probe, errors }, null, 2));

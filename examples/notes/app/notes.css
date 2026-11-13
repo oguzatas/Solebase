@@ -572,6 +572,10 @@
   background: rgba(255, 255, 255, 0.03);
 }
 
+.tree-folder-btn[aria-expanded='false'] .tree-folder-name {
+  opacity: 0.9;
+}
+
 .tree-chevron {
   width: 0.8rem;
   opacity: 0.7;
@@ -580,6 +584,17 @@
 
 .tree-folder-body.is-collapsed {
   display: none;
+}
+
+/* Nested folder rows stay readable deep in the mobile drawer */
+.tree-folder {
+  min-width: 0;
+}
+
+.tree-folder-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .tree-note {
