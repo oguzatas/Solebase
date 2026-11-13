@@ -21,7 +21,7 @@ Needs a secure context + OPFS (Chromium / modern Safari / Firefox). Network once
 | Layer 1 | `Solebase.init({ appId: 'notes' })` → `collection('notes' \| 'folders')` |
 | Storage | OPFS + cr-sqlite in a Web Worker (`core/db-worker.js`) |
 | Editor | CodeMirror 6 Markdown (Yjs rich-text API not exposed in Layer 1 yet) |
-| Sync | Layer 1 S3/R2 via Settings (`Solebase.init` sync) + optional legacy snapshot adapters |
+| Sync | Layer 1 S3/R2 via Settings (`Solebase.init` sync) — zero-LIST `manifest.json` + ETag (no ListObjects) |
 
 App code never opens IndexedDB as the notes database.
 

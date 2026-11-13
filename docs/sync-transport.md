@@ -35,9 +35,29 @@ Plaintext changesets never leave the device.
 | File | Role |
 |------|------|
 | [`core/sync-blob-store.js`](../core/sync-blob-store.js) | `MemoryBlobStore`, `S3BlobStore`, `DriveBlobStore` (+ factory) |
+| [`core/S3SyncAdapter.ts`](../core/S3SyncAdapter.ts) / [`.js`](../core/S3SyncAdapter.js) | Zero-LIST mailbox sync (`pull` / `push` via `manifest.json` + ETag) |
+| [`core/manifest.types.ts`](../core/manifest.types.ts) | `SyncManifest` schema + `S3SyncError` |
 | [`core/sync-p2p.js`](../core/sync-p2p.js) | WebRTC DataChannel session, manual SDP, loopback helper |
 | [`core/sync-transport.js`](../core/sync-transport.js) | Orchestrator: push/pull/merge + P2P hooks |
 | [`core/db-worker.js`](../core/db-worker.js) | `changeset_apply` RPC → merge + `NOTIFY` |
+
+## Zero-LIST S3 / R2 (default)
+
+Live `provider: 's3'` **does not** call `ListObjectsV2` (Class A). Each room uses a single index:
+
+```text
+{prefix}/{appId}/manifest.json
+{prefix}/{appId}/chunks/{timestamp}-{siteId}.bin
+```
+
+- **Pull:** `GET manifest.json` with `If-None-Match: <lastETag>` → **304** returns immediately; **200** downloads only unseen chunk keys in parallel, decrypts with `encryptionKey` (sync-crypto), applies.
+- **Push:** PUT encrypted `.bin` → GET manifest (capture ETag) → append chunk → PUT manifest with `If-Match` (or `If-None-Match: *` when creating). **412** → re-fetch, re-append same chunk key, retry ≤5 with backoff.
+- **GC:** optional prune of chunks older than `retentionDays` (default 30) during push.
+- **Memory / smoke:** `options.memory: true` keeps the in-process list path (no S3). Opt out of manifest with `useManifest: false` (legacy LIST; not recommended).
+
+### Migration from LIST-era blobs
+
+MVP is **manifest-only going forward**. Older `{prefix}/{appId}/{siteId}/*.changeset` objects are **not** listed or migrated automatically (that would reintroduce Class A LIST). New rooms start empty manifests; re-sync from a device that still has local OPFS, or one-shot upload a bootstrap changeset under the new layout. Do not rely on ongoing LIST.
 
 ## Configure (Layer 1)
 
@@ -82,8 +102,8 @@ Cloudflare MCP OAuth cannot mint S3 API tokens. In the dashboard: **R2 → Overv
 ### S3 second device
 
 1. Device A: init with S3 options + shared `appId` / `encryptionKey` → mutate → `await db.syncNow()` (or rely on `autoSync`).
-2. What lands in the bucket: **E2EE blobs only** (`packCiphertextPackage` / AES-GCM), keyed as `{prefix}/{appId}/{siteId}/{cursor}-{uuid}.changeset`.
-3. Device B: identical `appId`, `encryptionKey`, and S3 options → `syncNow()` / `autoSync` downloads unseen blobs → decrypt → `changeset_apply` → UI via `subscribe`.
+2. What lands in the bucket: **`manifest.json` + E2EE `.bin` chunks only** (AES-GCM via sync-crypto). No folder listing.
+3. Device B: identical `appId`, `encryptionKey`, and S3 options → `syncNow()` / `autoSync` ETag-polls the manifest → decrypt → `changeset_apply` → UI via `subscribe`.
 
 `memory: true` is for single-process smoke/dev only — it does **not** cross devices.
 
@@ -128,13 +148,20 @@ STUN: default `stun:stun.l.google.com:19302`. Override with `options.rtcConfig`.
 
 for each affected `sb_*` table. `Collection.subscribe` invalidates and re-fetches.
 
-## Blob key layout
+## Blob / manifest layout
+
+```text
+{prefix}/{appId}/manifest.json
+{prefix}/{appId}/chunks/{timestamp}-{siteId}.bin
+```
+
+Chunk values are packed ciphertext packages from `packCiphertextPackage` (AES-GCM).
+
+Legacy (memory / `useManifest: false` only):
 
 ```text
 {prefix}/{appId}/{siteId}/{cursor}-{uuid}.changeset
 ```
-
-Values are packed ciphertext packages from `packCiphertextPackage` (AES-GCM).
 
 ## Smoke
 
@@ -145,6 +172,7 @@ http://localhost:8080/examples/smoke-sync-transport/
 ```bash
 python -m http.server 8765 --bind 127.0.0.1
 node scripts/smoke-sync-transport.mjs
+node scripts/smoke-s3-manifest.mjs
 ```
 
-Expect `SMOKE_SYNC_TRANSPORT_OK` (memory S3 path + Drive stub + WebRTC encrypt/send/decrypt + P2P merge).
+Expect `SMOKE_SYNC_TRANSPORT_OK` (memory S3 path + Drive stub + WebRTC encrypt/send/decrypt + P2P merge) and `SMOKE_S3_MANIFEST_OK` (mock S3: 304, push, 412 retry, no LIST).

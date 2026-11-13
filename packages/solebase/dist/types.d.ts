@@ -18,6 +18,13 @@ export interface SyncOptions {
     secretAccessKey?: string;
     /** Blob key prefix (default solebase-changesets). */
     prefix?: string;
+    /**
+     * Use zero-LIST manifest sync for S3 (default true when credentials present).
+     * Set false only for legacy ListObjects debugging.
+     */
+    useManifest?: boolean;
+    /** Prune manifest chunks older than N days during push (default 30; 0 = off). */
+    retentionDays?: number;
     /** Drive stub: OAuth access token (live API not wired yet). */
     accessToken?: string;
     folderId?: string;

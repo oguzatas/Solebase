@@ -23,7 +23,9 @@ import {
 import {
   createBlobStore,
   changesetBlobKey,
+  MemoryBlobStore,
 } from './sync-blob-store.js';
+import { S3SyncAdapter } from './S3SyncAdapter.js';
 import {
   SolebaseP2PSession,
   connectP2PLoopback,
@@ -68,6 +70,32 @@ export class SolebaseSyncTransport {
     this.blobStore = createBlobStore(this.provider, this.options);
     this.prefix = String(this.options.prefix || 'solebase-changesets').replace(/^\/+|\/+$/g, '');
 
+    /**
+     * Zero-LIST manifest adapter for real S3/R2 (default on).
+     * Memory / injected blob stores keep the legacy list path for smoke.
+     * @type {S3SyncAdapter|null}
+     */
+    this.s3Sync = null;
+    if (shouldUseManifestAdapter(this.provider, this.options, this.blobStore)) {
+      const roomPrefix = `${this.prefix}/${sanitize(this.appId)}`;
+      this.s3Sync = new S3SyncAdapter({
+        endpoint: String(this.options.endpoint || ''),
+        region: String(this.options.region || 'auto'),
+        bucket: String(this.options.bucket || ''),
+        accessKeyId: String(this.options.accessKeyId || ''),
+        secretAccessKey: String(this.options.secretAccessKey || ''),
+        prefix: roomPrefix,
+        encryptionKey: this.encryptionKey,
+        retentionDays:
+          this.options.retentionDays === 0
+            ? 0
+            : Number(this.options.retentionDays ?? 30),
+        timeoutMs: this.options.timeoutMs,
+        maxRetries: this.options.maxRetries,
+        fetch: this.options.fetch,
+      });
+    }
+
     /** @type {number} */
     this.pushCursor = Number(this.options.pushCursor || 0);
     /** @type {Set<string>} */
@@ -90,10 +118,13 @@ export class SolebaseSyncTransport {
 
   async status() {
     const blob = await this.blobStore.status();
+    const manifest = this.s3Sync ? await this.s3Sync.status() : null;
     return {
       ok: blob.ok,
       provider: this.provider,
       blob,
+      manifest,
+      mode: this.s3Sync ? 'manifest' : 'list',
       p2p: this.p2p ? (this.p2p.connected ? 'connected' : 'pending') : 'off',
       pushCursor: this.pushCursor,
       seenBlobs: this._seenBlobKeys.size,
@@ -188,6 +219,7 @@ export class SolebaseSyncTransport {
 
   /**
    * Extract → encrypt → blob put (+ optional P2P send).
+   * Real S3 uses zero-LIST manifest push; memory/Drive keep blobStore.put.
    */
   async pushLocal() {
     await this._ensureSiteId();
@@ -200,15 +232,24 @@ export class SolebaseSyncTransport {
 
     const pkg = await encryptChangeset(payload, this.encryptionKey);
     const bytes = packCiphertextPackage(pkg);
-    const key = changesetBlobKey({
-      prefix: this.prefix,
-      appId: this.appId,
-      siteId: this._siteIdB64 || 'local',
-      cursor: payload.cursor,
-    });
+    const siteId = this._siteIdB64 || 'local';
 
-    await this.blobStore.put(key, bytes);
-    this._seenBlobKeys.add(key);
+    /** @type {string|undefined} */
+    let key;
+    if (this.s3Sync) {
+      this.s3Sync.setLocalSiteId(siteId);
+      await this.s3Sync.push(bytes, { siteId, dbVersion: payload.cursor });
+      key = `${this.prefix}/${sanitize(this.appId)}/chunks/*-${sanitize(siteId)}.bin`;
+    } else {
+      key = changesetBlobKey({
+        prefix: this.prefix,
+        appId: this.appId,
+        siteId,
+        cursor: payload.cursor,
+      });
+      await this.blobStore.put(key, bytes);
+      this._seenBlobKeys.add(key);
+    }
 
     if (this.p2p?.connected) {
       await this.p2p.sendEncryptedChangeset(bytes);
@@ -219,15 +260,94 @@ export class SolebaseSyncTransport {
   }
 
   /**
-   * List blob keys → download unseen → decrypt → apply (NOTIFY path).
+   * Pull remote changesets.
+   * Manifest mode: ETag poll + parallel chunk GET (no ListObjects).
+   * Legacy mode: list blob keys → download unseen → decrypt → apply.
    */
   async pullRemote() {
+    if (this.s3Sync) {
+      return this._pullRemoteManifest();
+    }
+    return this._pullRemoteList();
+  }
+
+  /** Zero-LIST pull via S3SyncAdapter (Class B ETag). */
+  async _pullRemoteManifest() {
+    await this._ensureSiteId();
+    this.s3Sync.setLocalSiteId(this._siteIdB64 || 'local');
+
+    let buffers;
+    try {
+      buffers = await this.s3Sync.pull(this.pushCursor);
+    } catch (err) {
+      throw new Error(
+        `manifest pull failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    let applied = 0;
+    let decryptFailed = 0;
+    /** @type {string[]} */
+    const mergedKeys = [];
+
+    for (const buf of buffers) {
+      let result;
+      try {
+        // Adapter decrypts when encryptionKey is set → JSON payload bytes.
+        const text = new TextDecoder().decode(buf);
+        let looksJson = false;
+        try {
+          const first = text.trim()[0];
+          looksJson = first === '{' || first === '[';
+        } catch {
+          looksJson = false;
+        }
+        if (looksJson) {
+          const payload = JSON.parse(text);
+          result = await this.applyPayload(payload);
+          this._onMerge({ source: 'manifest', ...result });
+        } else {
+          result = await this.applyEncryptedBytes(buf, { source: 'manifest' });
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (
+          /decryption failed|wrong key|passphrase|corrupted data|JSON\.parse/i.test(
+            message,
+          )
+        ) {
+          decryptFailed += 1;
+          this._onStatus(
+            `skip undecryptable manifest chunk (${decryptFailed}): wrong encryptionKey or stale package`,
+            'info',
+          );
+          continue;
+        }
+        throw err;
+      }
+      if (result?.applied > 0) {
+        applied += result.applied;
+        mergedKeys.push('manifest-chunk');
+      }
+    }
+
+    if (applied === 0 && decryptFailed > 0) {
+      throw new Error(
+        `Decryption failed for ${decryptFailed} remote changeset(s) — ` +
+          'encryptionKey does not match the device that uploaded them. ' +
+          'Re-scan the desktop bootstrap QR (or paste the same Encryption key), then Sync Now.',
+      );
+    }
+    return { applied, keys: mergedKeys, decryptFailed, mode: 'manifest' };
+  }
+
+  /** Legacy ListObjects pull (memory / Drive stub / opt-out). */
+  async _pullRemoteList() {
     const prefix = `${this.prefix}/${this.appId}/`;
     let keys = [];
     try {
       keys = await this.blobStore.list(prefix);
     } catch (err) {
-      // Memory stores always work; S3 list may be CORS-limited — surface clearly.
       throw new Error(
         `blob list failed: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -254,8 +374,6 @@ export class SolebaseSyncTransport {
         result = await this.applyEncryptedBytes(bytes, { source: 'blob', key });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        // Stale blobs from a prior deviceKey must not fail the whole pull when
-        // other peers' packages decrypt with the shared bootstrap key.
         if (/decryption failed|wrong key|passphrase|corrupted data/i.test(message)) {
           decryptFailed += 1;
           this._onStatus(
@@ -279,7 +397,7 @@ export class SolebaseSyncTransport {
           'Re-scan the desktop bootstrap QR (or paste the same Encryption key), then Sync Now.',
       );
     }
-    return { applied, keys: mergedKeys, decryptFailed };
+    return { applied, keys: mergedKeys, decryptFailed, mode: 'list' };
   }
 
   /**
@@ -416,4 +534,30 @@ function sanitize(value) {
   return String(value).replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80);
 }
 
-export { getDbVersion };
+/**
+ * Real S3 credentials → zero-LIST manifest adapter (default).
+ * Memory / injected stores / explicit useManifest:false → legacy list path.
+ *
+ * @param {string} provider
+ * @param {Record<string, unknown>} options
+ * @param {import('./sync-blob-store.js').BlobStore} blobStore
+ */
+function shouldUseManifestAdapter(provider, options, blobStore) {
+  if (provider !== 's3') return false;
+  if (options.useManifest === false) return false;
+  if (options.memory === true) return false;
+  if (options.blobStore) return false;
+  if (blobStore instanceof MemoryBlobStore) return false;
+  if (blobStore?.id === 'memory') return false;
+  if (
+    !options.endpoint ||
+    !options.bucket ||
+    !options.accessKeyId ||
+    !options.secretAccessKey
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export { getDbVersion, S3SyncAdapter };

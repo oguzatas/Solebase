@@ -7,7 +7,7 @@
  *
  * Providers:
  *   - MemoryBlobStore  — in-process Map (smoke / unit tests)
- *   - S3BlobStore      — AWS SigV4 path-style PUT/GET/LIST (R2 / MinIO / AWS)
+ *   - S3BlobStore      — AWS SigV4 path-style PUT/GET (+ legacy LIST; sync uses S3SyncAdapter)
  *   - DriveBlobStore   — Drive-shaped stub (same interface; memory until OAuth)
  */
 
@@ -182,6 +182,8 @@ export class S3BlobStore {
 
   /**
    * List object keys under prefix via ListObjectsV2 (path-style).
+   * **Deprecated for Solebase sync** — live S3/R2 sync uses `S3SyncAdapter`
+   * (`manifest.json` + ETag) and never calls this. Kept for tools / opt-out.
    * @param {string} [prefix]
    */
   async list(prefix) {
@@ -409,9 +411,20 @@ export function parseS3ListKeys(xml) {
 
 /**
  * AWS Signature Version 4 for browser fetch (path-style object or list URL).
+ * Supports conditional headers (If-Match / If-None-Match) for ETag locking.
+ *
  * @param {object} opts
+ * @param {string} opts.method
+ * @param {string} opts.url
+ * @param {string|Uint8Array|ArrayBufferView} [opts.body]
+ * @param {string} [opts.contentType]
+ * @param {string} opts.accessKeyId
+ * @param {string} opts.secretAccessKey
+ * @param {string} [opts.region]
+ * @param {Record<string, string>} [opts.extraHeaders] lowercase keys preferred
+ * @returns {Promise<{ headers: Record<string, string> }>}
  */
-async function signAwsV4(opts) {
+export async function signAwsV4(opts) {
   const method = opts.method;
   const url = new URL(opts.url);
   const region = opts.region || 'auto';
@@ -437,6 +450,16 @@ async function signAwsV4(opts) {
     'x-amz-date': amzDate,
   };
   if (opts.contentType) headerMap['content-type'] = opts.contentType;
+
+  if (opts.extraHeaders && typeof opts.extraHeaders === 'object') {
+    for (const [rawKey, rawVal] of Object.entries(opts.extraHeaders)) {
+      if (rawVal == null || rawVal === '') continue;
+      const key = String(rawKey).toLowerCase();
+      // Authorization / host / date are owned by the signer.
+      if (key === 'authorization' || key === 'host' || key === 'x-amz-date') continue;
+      headerMap[key] = String(rawVal).trim();
+    }
+  }
 
   const sortedKeys = Object.keys(headerMap).sort();
   const canonicalHeaders = sortedKeys.map((k) => `${k}:${headerMap[k]}\n`).join('');
@@ -478,6 +501,19 @@ async function signAwsV4(opts) {
     'x-amz-date': amzDate,
   };
   if (opts.contentType) headers['Content-Type'] = opts.contentType;
+  // Echo signed conditional / caller headers with conventional casing for fetch.
+  for (const key of sortedKeys) {
+    if (key === 'host' || key === 'x-amz-content-sha256' || key === 'x-amz-date' || key === 'content-type') {
+      continue;
+    }
+    const pretty =
+      key === 'if-match'
+        ? 'If-Match'
+        : key === 'if-none-match'
+          ? 'If-None-Match'
+          : key;
+    headers[pretty] = headerMap[key];
+  }
   return { headers };
 }
 
