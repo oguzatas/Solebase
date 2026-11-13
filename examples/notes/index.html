@@ -358,20 +358,66 @@
       </section>
 
       <section class="settings-section">
-        <h3>Storage backend</h3>
+        <h3>Solebase sync (R2)</h3>
+        <p class="settings-hint">
+          Layer 1 <code>Solebase.init({ sync: { provider: 's3', options } })</code> — E2EE changeset blobs in Cloudflare R2.
+          Credentials stay in this browser’s localStorage only (never committed).
+        </p>
+        <p class="settings-hint">
+          <strong>One dashboard step:</strong> Cloudflare dashboard → <strong>R2</strong> → Overview →
+          <strong>Manage API Tokens</strong> → Create → permissions <strong>Object Read &amp; Write</strong> →
+          apply to bucket <code>solebase-sync-test</code> → copy <strong>Access Key ID</strong> + <strong>Secret Access Key</strong> into the fields below.
+          (MCP OAuth cannot mint S3 API tokens; API Tokens Write is required once.)
+        </p>
+        <p id="cfg-sync-status">—</p>
+        <label class="settings-field">
+          <span>Encryption key (same on every device)</span>
+          <input type="text" id="cfg-encryption-key" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="settings-field">
+          <span>Endpoint</span>
+          <input type="url" id="cfg-s3-endpoint" placeholder="https://&lt;account&gt;.r2.cloudflarestorage.com" />
+        </label>
+        <label class="settings-field">
+          <span>Region</span>
+          <input type="text" id="cfg-s3-region" placeholder="auto" value="auto" />
+        </label>
+        <label class="settings-field">
+          <span>Bucket</span>
+          <input type="text" id="cfg-s3-bucket" placeholder="solebase-sync-test" />
+        </label>
+        <label class="settings-field">
+          <span>Access Key ID</span>
+          <input type="text" id="cfg-s3-key" autocomplete="off" spellcheck="false" />
+        </label>
+        <label class="settings-field">
+          <span>Secret Access Key</span>
+          <input type="password" id="cfg-s3-secret" autocomplete="off" />
+        </label>
+        <label class="settings-field">
+          <span>Blob prefix</span>
+          <input type="text" id="cfg-s3-prefix" placeholder="solebase-changesets" />
+        </label>
+        <label class="settings-field" style="flex-direction:row;align-items:center;gap:0.5rem">
+          <input type="checkbox" id="cfg-solebase-autosync" checked />
+          <span style="margin:0">autoSync after local writes</span>
+        </label>
+        <div class="settings-actions">
+          <button type="button" class="btn btn-primary" id="cfg-save">Save settings</button>
+          <button type="button" class="btn btn-ghost" id="cfg-solebase-sync-now">Sync Now</button>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h3>Legacy snapshot adapters</h3>
+        <p class="settings-hint">Optional older full-vault JSON sync (Drive / WebDAV / S3 object). Prefer Solebase R2 sync above for changeset E2EE.</p>
         <label class="settings-field">
           <span>Adapter</span>
           <select id="cfg-adapter"></select>
         </label>
-        <p id="cfg-sync-status">—</p>
-      </section>
-
-      <section class="settings-section">
-        <h3>Encryption</h3>
-        <p class="settings-hint">Passphrase encrypts cloud sync and manual exports (AES-GCM). Session-only — never written to disk. <strong>Forgot passphrase = data unrecoverable.</strong></p>
         <label class="settings-field">
-          <span>Passphrase</span>
-          <input type="password" id="cfg-passphrase" autocomplete="off" placeholder="Required for cloud sync" />
+          <span>Passphrase (legacy snapshot E2EE)</span>
+          <input type="password" id="cfg-passphrase" autocomplete="off" placeholder="Required for legacy cloud sync" />
         </label>
       </section>
 
@@ -405,28 +451,8 @@
       </section>
 
       <section class="settings-section" data-adapter-panel="s3" hidden>
-        <h3>S3-compatible</h3>
-        <p class="settings-hint">Cloudflare R2, MinIO, or AWS S3. Enable CORS for this origin (GET, PUT, HEAD).</p>
-        <label class="settings-field">
-          <span>Endpoint</span>
-          <input type="url" id="cfg-s3-endpoint" placeholder="https://&lt;account&gt;.r2.cloudflarestorage.com" />
-        </label>
-        <label class="settings-field">
-          <span>Region</span>
-          <input type="text" id="cfg-s3-region" placeholder="auto" />
-        </label>
-        <label class="settings-field">
-          <span>Bucket</span>
-          <input type="text" id="cfg-s3-bucket" />
-        </label>
-        <label class="settings-field">
-          <span>Access Key ID</span>
-          <input type="text" id="cfg-s3-key" autocomplete="off" />
-        </label>
-        <label class="settings-field">
-          <span>Secret Access Key</span>
-          <input type="password" id="cfg-s3-secret" autocomplete="off" />
-        </label>
+        <h3>Legacy S3 vault object</h3>
+        <p class="settings-hint">Single encrypted JSON object (legacy). Layer 1 R2 sync uses the Solebase sync section above instead.</p>
         <label class="settings-field">
           <span>Object key</span>
           <input type="text" id="cfg-s3-object" placeholder="solebase-notes-vault.json" />
@@ -434,12 +460,11 @@
       </section>
 
       <section class="settings-section">
-        <h3>Sync &amp; backup</h3>
-        <p class="settings-hint">Saving a remote adapter + passphrase turns on automatic sync. Manual push/pull available anytime.</p>
+        <h3>Backup</h3>
+        <p class="settings-hint">Manual vault export/import and legacy push/pull. Solebase Sync Now is in the R2 section.</p>
         <div class="settings-actions">
-          <button type="button" class="btn btn-primary" id="cfg-save">Save settings</button>
-          <button type="button" class="btn btn-ghost" id="cfg-push">Sync now</button>
-          <button type="button" class="btn btn-ghost" id="cfg-pull">Pull &amp; merge</button>
+          <button type="button" class="btn btn-ghost" id="cfg-push">Legacy sync now</button>
+          <button type="button" class="btn btn-ghost" id="cfg-pull">Legacy pull &amp; merge</button>
           <button type="button" class="btn btn-ghost" id="cfg-export">Export vault</button>
           <label class="btn btn-ghost" style="cursor:pointer">
             Import vault

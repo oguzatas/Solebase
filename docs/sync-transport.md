@@ -51,11 +51,12 @@ const db = await Solebase.init({
     provider: 's3', // or 'drive'
     options: {
       // S3 (R2 / MinIO / AWS) — path-style SigV4
-      endpoint: 'https://xxx.r2.cloudflarestorage.com',
+      // Notes Settings prefills this R2 account + solebase-sync-test bucket.
+      endpoint: 'https://7701962a7c1ef34d73878ef8650ef733.r2.cloudflarestorage.com',
       region: 'auto',
-      bucket: 'my-bucket',
-      accessKeyId: '…',
-      secretAccessKey: '…',
+      bucket: 'solebase-sync-test',
+      accessKeyId: '…',     // R2 → Manage API Tokens → Object Read & Write
+      secretAccessKey: '…', // paste locally only; never commit
       prefix: 'solebase-changesets',
 
       // Smoke / tests without a real bucket:
@@ -73,6 +74,10 @@ const db = await Solebase.init({
 await db.collection('notes').insert({ title: 'Hi' });
 await db.syncNow(); // optional manual cycle
 ```
+
+### R2 API token (dashboard once)
+
+Cloudflare MCP OAuth cannot mint S3 API tokens. In the dashboard: **R2 → Overview → Manage API Tokens → Object Read & Write → bucket `solebase-sync-test`** → copy Access Key ID + Secret into Notes **Settings → Solebase sync (R2)** (or your own `Solebase.init` options). See [`examples/notes/README.md`](../examples/notes/README.md).
 
 ### S3 second device
 

@@ -56,13 +56,16 @@ export function defaultSettings() {
     webdavUrl: '', // e.g. "https://cloud.example.com/remote.php/dav/files/USER/Prompt2UI/"
     webdavUsername: '',
     webdavPassword: '',
-    // S3-compatible
-    s3Endpoint: '', // e.g. "https://<account>.r2.cloudflarestorage.com" or MinIO URL
+    // S3-compatible / Cloudflare R2 (Layer 1 Solebase sync + legacy snapshot adapter)
+    // Secrets stay in localStorage only — never commit real keys.
+    s3Endpoint: 'https://7701962a7c1ef34d73878ef8650ef733.r2.cloudflarestorage.com',
     s3Region: 'auto',
-    s3Bucket: '',
+    s3Bucket: 'solebase-sync-test',
     s3AccessKeyId: '',
     s3SecretAccessKey: '',
     s3ObjectKey: CLOUD_BLOB_NAME,
+    s3Prefix: 'solebase-changesets',
+    solebaseAutoSync: true,
     lastSyncAt: null,
     lastSyncStatus: null,
   };

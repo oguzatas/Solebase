@@ -15,7 +15,7 @@ import {
   createAdapter,
   listAdapters,
 } from './prompt-storage.js';
-import { db } from './db-api.js';
+import { db, R2_DEFAULTS } from './db-api.js';
 import { syncEngine } from './sync-engine.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
@@ -103,13 +103,42 @@ export function initSettingsPanel(opts = {}) {
   });
 
   $('#cfg-save')?.addEventListener('click', async () => {
-    readSettingsFromForm();
-    toastFn('Settings saved', 'ok');
-    await updateSyncStatus();
-    // Choosing adapter + passphrase enables sync automatically
-    if (syncEngine.isEnabled()) {
-      const result = await syncEngine.syncNow('settings-save');
-      if (result.ok) toastFn('Cloud sync enabled', 'ok');
+    try {
+      readSettingsFromForm();
+      await db.reconfigure();
+      toastFn('Settings saved', 'ok');
+      await updateSyncStatus();
+      if (db.hasSolebaseSync() && db.solebase?.getSync()) {
+        const result = await db.syncNow('settings-save');
+        if (result?.ok !== false) {
+          toastFn('Solebase R2 sync enabled', 'ok');
+          opts.onImported?.();
+        }
+      } else if (syncEngine.isEnabled()) {
+        const result = await syncEngine.syncNow('settings-save');
+        if (result.ok) toastFn('Cloud sync enabled', 'ok');
+      }
+    } catch (err) {
+      toastFn(err.message || 'Save failed', 'err');
+    }
+  });
+
+  $('#cfg-solebase-sync-now')?.addEventListener('click', async () => {
+    try {
+      readSettingsFromForm();
+      await db.reconfigure();
+      const result = await db.syncNow('manual');
+      if (result?.reason === 'idle' || result?.error === 'sync not configured') {
+        toastFn(result.detail || 'Paste R2 keys, then Save.', 'info');
+      } else if (result?.ok === false) {
+        toastFn(result.detail || result.error || 'Sync failed', 'err');
+      } else {
+        toastFn('Synced via Solebase (R2)', 'ok');
+        opts.onImported?.();
+      }
+      await updateSyncStatus();
+    } catch (err) {
+      toastFn(err.message || 'Sync failed', 'err');
     }
   });
 
@@ -227,16 +256,21 @@ function paintSettingsForm() {
     .join('');
 
   $('#cfg-passphrase').value = sessionPassphrase;
+  $('#cfg-encryption-key').value = db.getEncryptionKey();
   $('#cfg-google-client').value = s.googleClientId || '';
   $('#cfg-webdav-url').value = s.webdavUrl || '';
   $('#cfg-webdav-user').value = s.webdavUsername || '';
   $('#cfg-webdav-pass').value = s.webdavPassword || '';
-  $('#cfg-s3-endpoint').value = s.s3Endpoint || '';
-  $('#cfg-s3-region').value = s.s3Region || 'auto';
-  $('#cfg-s3-bucket').value = s.s3Bucket || '';
+  $('#cfg-s3-endpoint').value = s.s3Endpoint || R2_DEFAULTS.endpoint;
+  $('#cfg-s3-region').value = s.s3Region || R2_DEFAULTS.region;
+  $('#cfg-s3-bucket').value = s.s3Bucket || R2_DEFAULTS.bucket;
   $('#cfg-s3-key').value = s.s3AccessKeyId || '';
   $('#cfg-s3-secret').value = s.s3SecretAccessKey || '';
+  $('#cfg-s3-prefix').value = s.s3Prefix || R2_DEFAULTS.prefix;
   $('#cfg-s3-object').value = s.s3ObjectKey || 'prompt2ui-vault.json';
+  if ($('#cfg-solebase-autosync')) {
+    $('#cfg-solebase-autosync').checked = s.solebaseAutoSync !== false;
+  }
 
   updateAdapterPanels(s.adapter);
   updateSyncStatus();
@@ -298,18 +332,31 @@ function updateAdapterPanels(adapterId) {
 }
 
 async function updateSyncStatus() {
-  const adapter = createAdapter(loadSettings());
-  const st = await adapter.status();
   const el = $('#cfg-sync-status');
   if (!el) return;
+  const settings = loadSettings();
+  const solebaseSync = db.buildS3SyncConfig(settings);
+  const live = Boolean(db.solebase?.getSync?.());
+
+  if (solebaseSync) {
+    const o = solebaseSync.options;
+    el.textContent = live
+      ? `Solebase R2 sync live · ${o.bucket} @ ${o.endpoint}`
+      : `Solebase R2 credentials saved · Save / Sync Now to connect · ${o.bucket}`;
+    el.dataset.ok = live ? '1' : '0';
+    return;
+  }
+
+  const adapter = createAdapter(settings);
+  const st = await adapter.status();
   const enabled = syncEngine.isEnabled();
   const syncHint = enabled
-    ? ' · auto-sync on'
-    : loadSettings().adapter === 'local'
-      ? ' · auto-sync idle (local only)'
-      : ' · auto-sync idle (enter passphrase)';
-  const last = loadSettings().lastSyncAt
-    ? ` · last ${new Date(loadSettings().lastSyncAt).toLocaleString()}`
+    ? ' · legacy snapshot auto-sync on'
+    : settings.adapter === 'local'
+      ? ' · paste R2 Access Key ID + Secret for Solebase sync'
+      : ' · legacy auto-sync idle (enter passphrase)';
+  const last = settings.lastSyncAt
+    ? ` · last ${new Date(settings.lastSyncAt).toLocaleString()}`
     : '';
   el.textContent = st.label + (st.detail ? ` — ${st.detail}` : '') + syncHint + last;
   el.dataset.ok = st.ok ? '1' : '0';
@@ -317,6 +364,14 @@ async function updateSyncStatus() {
 
 function readSettingsFromForm() {
   sessionPassphrase = $('#cfg-passphrase')?.value || '';
+  const encKey = $('#cfg-encryption-key')?.value?.trim();
+  if (encKey) {
+    try {
+      db.setEncryptionKey(encKey);
+    } catch (err) {
+      toastFn(err.message, 'err');
+    }
+  }
   return saveSettings({
     adapter: $('#cfg-adapter')?.value || 'local',
     passphraseSet: Boolean(sessionPassphrase),
@@ -324,12 +379,16 @@ function readSettingsFromForm() {
     webdavUrl: $('#cfg-webdav-url')?.value.trim() || '',
     webdavUsername: $('#cfg-webdav-user')?.value.trim() || '',
     webdavPassword: $('#cfg-webdav-pass')?.value || '',
-    s3Endpoint: $('#cfg-s3-endpoint')?.value.trim() || '',
-    s3Region: $('#cfg-s3-region')?.value.trim() || 'auto',
-    s3Bucket: $('#cfg-s3-bucket')?.value.trim() || '',
+    s3Endpoint: $('#cfg-s3-endpoint')?.value.trim() || R2_DEFAULTS.endpoint,
+    s3Region: $('#cfg-s3-region')?.value.trim() || R2_DEFAULTS.region,
+    s3Bucket: $('#cfg-s3-bucket')?.value.trim() || R2_DEFAULTS.bucket,
     s3AccessKeyId: $('#cfg-s3-key')?.value.trim() || '',
     s3SecretAccessKey: $('#cfg-s3-secret')?.value || '',
+    s3Prefix: $('#cfg-s3-prefix')?.value.trim() || R2_DEFAULTS.prefix,
     s3ObjectKey: $('#cfg-s3-object')?.value.trim() || 'prompt2ui-vault.json',
+    solebaseAutoSync: $('#cfg-solebase-autosync')
+      ? $('#cfg-solebase-autosync').checked
+      : true,
   });
 }
 

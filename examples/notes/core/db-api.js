@@ -9,22 +9,42 @@
  *   db.collection('notes').subscribe((rows) => render(rows));
  *
  * Local source of truth: OPFS-backed cr-sqlite via Solebase.init + collection().
- * Optional Settings sync still exports/imports collection snapshots (E2EE).
+ * Optional Layer 1 S3/R2 sync (E2EE changesets) reads credentials from browser
+ * localStorage only — never commit secrets.
  */
 
 import { Solebase } from '../../../packages/solebase/dist/index.js';
+import { loadSettings } from './prompt-storage.js';
 
 const APP_ID = 'notes';
 const DEVICE_KEY = 'solebase:notes:deviceKey';
 /** Known collections for vault export / import. */
 const KNOWN = ['notes', 'folders'];
 
+/** Prefill for Cloudflare R2 (account 7701962a7c1ef34d73878ef8650ef733). */
+export const R2_DEFAULTS = {
+  endpoint: 'https://7701962a7c1ef34d73878ef8650ef733.r2.cloudflarestorage.com',
+  region: 'auto',
+  bucket: 'solebase-sync-test',
+  prefix: 'solebase-changesets',
+};
+
 /** @type {import('../../../packages/solebase/dist/index.js').Solebase | null} */
 let solebase = null;
 /** @type {Promise<import('../../../packages/solebase/dist/index.js').Solebase> | null} */
 let initPromise = null;
+/** Fingerprint of last applied sync options (detect credential changes). */
+let lastSyncFingerprint = '';
 
-function deviceEncryptionKey() {
+export function getAppId() {
+  return APP_ID;
+}
+
+/**
+ * Device / shared encryption key (localStorage). Same key required on every device.
+ * @returns {string}
+ */
+export function getEncryptionKey() {
   try {
     let key = localStorage.getItem(DEVICE_KEY);
     if (!key) {
@@ -38,11 +58,85 @@ function deviceEncryptionKey() {
 }
 
 /**
- * Start Solebase (worker + OPFS). Idempotent.
+ * Persist a shared encryption key (e.g. pasted from another device).
+ * @param {string} key
+ */
+export function setEncryptionKey(key) {
+  const trimmed = String(key || '').trim();
+  if (!trimmed) throw new Error('encryptionKey must be a non-empty string');
+  localStorage.setItem(DEVICE_KEY, trimmed);
+  return trimmed;
+}
+
+/**
+ * Build Layer 1 sync config from browser settings (no secrets in source).
+ * @param {ReturnType<typeof loadSettings>} [settings]
+ * @returns {{ provider: 's3', options: object } | undefined}
+ */
+export function buildS3SyncConfig(settings = loadSettings()) {
+  const endpoint = (settings.s3Endpoint || R2_DEFAULTS.endpoint).replace(/\/$/, '');
+  const region = settings.s3Region || R2_DEFAULTS.region;
+  const bucket = settings.s3Bucket || R2_DEFAULTS.bucket;
+  const accessKeyId = (settings.s3AccessKeyId || '').trim();
+  const secretAccessKey = settings.s3SecretAccessKey || '';
+  const prefix = (settings.s3Prefix || R2_DEFAULTS.prefix).trim() || R2_DEFAULTS.prefix;
+
+  if (!accessKeyId || !secretAccessKey) {
+    return undefined;
+  }
+
+  return {
+    provider: 's3',
+    options: {
+      endpoint,
+      region,
+      bucket,
+      accessKeyId,
+      secretAccessKey,
+      prefix,
+      autoSync: settings.solebaseAutoSync !== false,
+      allowMemoryFallback: false,
+    },
+  };
+}
+
+function syncFingerprint(sync) {
+  if (!sync?.options) return '';
+  const o = sync.options;
+  return [
+    o.endpoint,
+    o.region,
+    o.bucket,
+    o.accessKeyId,
+    o.secretAccessKey,
+    o.prefix,
+    o.autoSync === false ? '0' : '1',
+  ].join('|');
+}
+
+/**
+ * Start Solebase (worker + OPFS). Idempotent until credentials change.
+ * @param {{ force?: boolean }} [opts]
  * @returns {Promise<import('../../../packages/solebase/dist/index.js').Solebase>}
  */
-export async function ready() {
-  if (solebase) return solebase;
+export async function ready(opts = {}) {
+  const sync = buildS3SyncConfig();
+  const fp = syncFingerprint(sync);
+
+  if (solebase && !opts.force && fp === lastSyncFingerprint) {
+    return solebase;
+  }
+
+  if (solebase && (opts.force || fp !== lastSyncFingerprint)) {
+    try {
+      await solebase.close();
+    } catch {
+      /* ignore close races */
+    }
+    solebase = null;
+    initPromise = null;
+  }
+
   if (!initPromise) {
     if (!globalThis.isSecureContext) {
       throw new Error('Solebase needs a secure context (localhost or https)');
@@ -51,16 +145,52 @@ export async function ready() {
       throw new Error('OPFS is not available in this browser');
     }
     const workerUrl = new URL('../../../core/db-worker.js', import.meta.url);
-    initPromise = Solebase.init({
+    const encryptionKey = getEncryptionKey();
+    /** @type {import('../../../packages/solebase/dist/index.js').SolebaseConfig} */
+    const config = {
       appId: APP_ID,
-      encryptionKey: deviceEncryptionKey(),
+      encryptionKey,
       workerUrl,
-    }).then((instance) => {
+    };
+    if (sync) {
+      config.sync = sync;
+    }
+    initPromise = Solebase.init(config).then((instance) => {
       solebase = instance;
+      lastSyncFingerprint = fp;
       return instance;
     });
   }
   return initPromise;
+}
+
+/**
+ * Re-init Solebase after Settings save (picks up new R2 credentials).
+ * @returns {Promise<import('../../../packages/solebase/dist/index.js').Solebase>}
+ */
+export async function reconfigure() {
+  return ready({ force: true });
+}
+
+/**
+ * Layer 1 syncNow — no-op shaped result when sync is not configured.
+ * @param {string} [reason]
+ */
+export async function syncNow(reason = 'manual') {
+  const sb = await ready();
+  if (!sb.getSync()) {
+    return {
+      ok: false,
+      reason: 'idle',
+      detail: 'Paste R2 Access Key ID + Secret in Settings, then Save.',
+    };
+  }
+  return sb.syncNow(reason);
+}
+
+/** @returns {boolean} */
+export function hasSolebaseSync() {
+  return Boolean(solebase?.getSync?.() || buildS3SyncConfig());
 }
 
 /**
@@ -151,6 +281,14 @@ class CollectionHandle {
  */
 export const db = {
   ready,
+  reconfigure,
+  syncNow,
+  hasSolebaseSync,
+  getAppId,
+  getEncryptionKey,
+  setEncryptionKey,
+  buildS3SyncConfig,
+  R2_DEFAULTS,
 
   /**
    * @param {string} name
