@@ -96,15 +96,28 @@ export function initSettingsPanel(opts = {}) {
   $('#cfg-solebase-sync-now')?.addEventListener('click', async () => {
     try {
       readSettingsFromForm();
-      // Reuse live OPFS worker — force reopen caused phone InvalidStateError.
+      // Reuse live OPFS worker when S3 + encryptionKey fingerprint unchanged.
+      // ready() reopens (with contention retries) if the shared key drifted —
+      // that was the Sync Now decrypt regression after the InvalidState fix.
       await db.ready();
+      const live = db.getLiveEncryptionKey?.() || '';
+      const stored = db.getEncryptionKey();
+      if (live && stored && live !== stored) {
+        await db.reconfigure();
+      }
       const result = await db.syncNow('manual');
       if (result?.reason === 'idle' || result?.error === 'sync not configured') {
         toastFn(result.detail || 'Paste R2 keys, then Save.', 'info');
       } else if (result?.ok === false) {
         toastFn(result.detail || result.error || 'Sync failed', 'err');
       } else {
-        toastFn('Synced via Solebase (R2)', 'ok');
+        const skipped = Number(result?.pulled?.decryptFailed || 0);
+        toastFn(
+          skipped > 0
+            ? `Synced via Solebase (R2) — skipped ${skipped} stale blob(s)`
+            : 'Synced via Solebase (R2)',
+          'ok',
+        );
         opts.onImported?.();
       }
       await updateSyncStatus();
@@ -156,6 +169,12 @@ export function initSettingsPanel(opts = {}) {
   $('#cfg-bootstrap-generate')?.addEventListener('click', async () => {
     try {
       readSettingsFromForm();
+      // Ensure the live Solebase transport encrypts with the key we put in the QR.
+      const stored = db.getEncryptionKey();
+      const live = db.getLiveEncryptionKey?.() || '';
+      if (db.hasSolebaseSync() && (!live || live !== stored)) {
+        await db.reconfigure();
+      }
       await paintBootstrapShare({ force: true });
       toastFn('Device bootstrap QR ready', 'ok');
     } catch (err) {

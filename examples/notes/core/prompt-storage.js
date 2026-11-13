@@ -32,6 +32,18 @@ function migrateLegacySettingsOnce() {
       if (!raw) continue;
       localStorage.setItem(SETTINGS_KEY, raw);
       localStorage.removeItem(k);
+      // Heal encryptionKey mirror from solebase:notes:deviceKey when legacy
+      // settings JSON lacked it (pre-persist-credentials / passphrase era).
+      try {
+        const parsed = JSON.parse(raw);
+        const deviceKey = String(localStorage.getItem('solebase:notes:deviceKey') || '').trim();
+        if (deviceKey && !String(parsed?.encryptionKey || '').trim()) {
+          parsed.encryptionKey = deviceKey;
+          localStorage.setItem(SETTINGS_KEY, JSON.stringify(parsed));
+        }
+      } catch {
+        /* ignore heal */
+      }
       return;
     }
   } catch {

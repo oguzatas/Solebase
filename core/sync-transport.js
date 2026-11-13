@@ -234,6 +234,7 @@ export class SolebaseSyncTransport {
     }
 
     let applied = 0;
+    let decryptFailed = 0;
     /** @type {string[]} */
     const mergedKeys = [];
     for (const key of keys) {
@@ -248,14 +249,37 @@ export class SolebaseSyncTransport {
         this._seenBlobKeys.add(key);
         continue;
       }
-      const result = await this.applyEncryptedBytes(bytes, { source: 'blob', key });
+      let result;
+      try {
+        result = await this.applyEncryptedBytes(bytes, { source: 'blob', key });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // Stale blobs from a prior deviceKey must not fail the whole pull when
+        // other peers' packages decrypt with the shared bootstrap key.
+        if (/decryption failed|wrong key|passphrase|corrupted data/i.test(message)) {
+          decryptFailed += 1;
+          this._onStatus(
+            `skip undecryptable blob (${decryptFailed}): wrong encryptionKey or stale package`,
+            'info',
+          );
+          continue;
+        }
+        throw err;
+      }
       this._seenBlobKeys.add(key);
       if (result.applied > 0) {
         applied += result.applied;
         mergedKeys.push(key);
       }
     }
-    return { applied, keys: mergedKeys };
+    if (applied === 0 && decryptFailed > 0) {
+      throw new Error(
+        `Decryption failed for ${decryptFailed} remote changeset(s) — ` +
+          'encryptionKey does not match the device that uploaded them. ' +
+          'Re-scan the desktop bootstrap QR (or paste the same Encryption key), then Sync Now.',
+      );
+    }
+    return { applied, keys: mergedKeys, decryptFailed };
   }
 
   /**

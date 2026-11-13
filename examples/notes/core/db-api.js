@@ -57,22 +57,67 @@ function isOpfsContentionError(err) {
 }
 
 /**
+ * Keep solebase:notes:deviceKey and settings.encryptionKey identical.
+ * After settings migrated to solebase:notes:settings, a stale mirror caused
+ * QR/bootstrap to advertise one key while Solebase.init used another.
+ * @returns {string} canonical non-empty key, or ''
+ */
+function reconcileEncryptionKeyStores() {
+  let device = '';
+  try {
+    device = String(localStorage.getItem(DEVICE_KEY) || '').trim();
+  } catch {
+    device = '';
+  }
+  let fromSettings = '';
+  try {
+    fromSettings = String(loadSettings().encryptionKey || '').trim();
+  } catch {
+    fromSettings = '';
+  }
+
+  // If they diverge, prefer settings (QR/Save target). A leftover pre-bootstrap
+  // random deviceKey was the common phone-side mismatch after key migration.
+  if (device && fromSettings && device !== fromSettings) {
+    try {
+      localStorage.setItem(DEVICE_KEY, fromSettings);
+    } catch {
+      /* ignore */
+    }
+    return fromSettings;
+  }
+  if (device) {
+    if (fromSettings !== device) {
+      try {
+        saveSettings({ encryptionKey: device });
+      } catch {
+        /* settings mirror is best-effort */
+      }
+    }
+    return device;
+  }
+  if (fromSettings) {
+    try {
+      localStorage.setItem(DEVICE_KEY, fromSettings);
+    } catch {
+      /* ignore */
+    }
+    return fromSettings;
+  }
+  return '';
+}
+
+/**
  * Device / shared encryption key (localStorage). Same key required on every device.
  * Never regenerates when a key already exists (DEVICE_KEY or settings.encryptionKey).
  * @returns {string}
  */
 export function getEncryptionKey() {
   try {
-    let key = localStorage.getItem(DEVICE_KEY);
-    if (key && key.trim()) return key.trim();
+    const existing = reconcileEncryptionKeyStores();
+    if (existing) return existing;
 
-    const fromSettings = String(loadSettings().encryptionKey || '').trim();
-    if (fromSettings) {
-      localStorage.setItem(DEVICE_KEY, fromSettings);
-      return fromSettings;
-    }
-
-    key = `${crypto.randomUUID()}${crypto.randomUUID()}`;
+    const key = `${crypto.randomUUID()}${crypto.randomUUID()}`;
     localStorage.setItem(DEVICE_KEY, key);
     try {
       saveSettings({ encryptionKey: key });
@@ -99,6 +144,15 @@ export function setEncryptionKey(key) {
     /* settings mirror is best-effort */
   }
   return trimmed;
+}
+
+/** Live Solebase instance key, or '' when not started. */
+export function getLiveEncryptionKey() {
+  try {
+    return String(solebase?.getEncryptionKey?.() || '').trim();
+  } catch {
+    return '';
+  }
 }
 
 /**
@@ -133,8 +187,13 @@ export function buildS3SyncConfig(settings = loadSettings()) {
   };
 }
 
-function syncFingerprint(sync) {
-  if (!sync?.options) return '';
+function syncFingerprint(sync, encryptionKey = getEncryptionKey()) {
+  // encryptionKey MUST be part of the fingerprint. After the Sync Now OPFS fix,
+  // ready() reuses the live worker — without this, QR/bootstrap or a pasted
+  // shared key updated localStorage while SolebaseSyncTransport kept encrypting
+  // / decrypting with the stale in-memory key → "Decryption failed".
+  const keyPart = String(encryptionKey || '').trim();
+  if (!sync?.options) return `nosync|${keyPart}`;
   const o = sync.options;
   return [
     o.endpoint,
@@ -144,6 +203,7 @@ function syncFingerprint(sync) {
     o.secretAccessKey,
     o.prefix,
     o.autoSync === false ? '0' : '1',
+    keyPart,
   ].join('|');
 }
 
@@ -157,16 +217,19 @@ function syncFingerprint(sync) {
  */
 export async function ready(opts = {}) {
   const sync = buildS3SyncConfig();
-  const fp = syncFingerprint(sync);
+  const encryptionKey = getEncryptionKey();
+  const fp = syncFingerprint(sync, encryptionKey);
 
   // Always serialize through reopenGate so Sync Now never receives a worker
   // that Save/bootstrap is in the middle of closing (OPFS InvalidStateError).
   const run = async () => {
-    if (solebase && !opts.force && fp === lastSyncFingerprint) {
+    const liveKey = getLiveEncryptionKey();
+    const keyDrift = Boolean(solebase && liveKey && liveKey !== encryptionKey);
+    if (solebase && !opts.force && !keyDrift && fp === lastSyncFingerprint) {
       return solebase;
     }
 
-    if (solebase && (opts.force || fp !== lastSyncFingerprint)) {
+    if (solebase && (opts.force || keyDrift || fp !== lastSyncFingerprint)) {
       try {
         await solebase.close();
       } catch {
@@ -186,15 +249,18 @@ export async function ready(opts = {}) {
         throw new Error('OPFS is not available in this browser');
       }
       const workerUrl = new URL('../../../core/db-worker.js', import.meta.url);
-      const encryptionKey = getEncryptionKey();
+      // Re-read after possible close; QR/Save may have updated storage mid-gate.
+      const key = getEncryptionKey();
+      const syncNow = buildS3SyncConfig();
+      const fpNow = syncFingerprint(syncNow, key);
       /** @type {import('../../../packages/solebase/dist/index.js').SolebaseConfig} */
       const config = {
         appId: APP_ID,
-        encryptionKey,
+        encryptionKey: key,
         workerUrl,
       };
-      if (sync) {
-        config.sync = sync;
+      if (syncNow) {
+        config.sync = syncNow;
       }
 
       initPromise = (async () => {
@@ -205,7 +271,7 @@ export async function ready(opts = {}) {
           try {
             const instance = await Solebase.init(config);
             solebase = instance;
-            lastSyncFingerprint = fp;
+            lastSyncFingerprint = fpNow;
             return instance;
           } catch (err) {
             lastErr = err;
@@ -350,6 +416,7 @@ export const db = {
   getAppId,
   getEncryptionKey,
   setEncryptionKey,
+  getLiveEncryptionKey,
   buildS3SyncConfig,
   R2_DEFAULTS,
   ENCRYPTION_KEY_STORAGE,
